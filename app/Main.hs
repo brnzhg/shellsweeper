@@ -99,7 +99,7 @@ randUniqueGridCoordIndices gen k = runST s
     s :: (forall s. ST s [F.Finite n])
     s = do
       (v :: VGMS.MVector VM.MVector n s (F.Finite n)) <- VGMS.new
-      forM_ [minBound..k] (\i -> VGMS.write v i i)
+      forM_ (enumFrom minBound) (\i -> VGMS.write v i i) --TODO make better with lenses
       evalRand (shuffleTopKM v k) gen
       (vf :: VGS.Vector V.Vector n (F.Finite n)) <- VGS.freeze v
       return $ take (fromIntegral k) $ toList vf
