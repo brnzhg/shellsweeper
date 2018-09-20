@@ -92,15 +92,18 @@ shuffleTopKM v k = fmap sequence_ $ forM [minBound..k] $ randSwapRightM v
 
 
 --should really go the freeze unfreeze route
-randUniqueGridCoordIndices :: forall g n. (RandomGen g, KnownNat n) =>
-  g -> F.Finite n -> [F.Finite n]
-randUniqueGridCoordIndices gen k = runST s
+randUniqueGridCoordIndices :: forall g n. (RandomGen g, KnownNat n, KnownNat (n + 1)) =>
+  g -> F.Finite (n + 1) -> [F.Finite n]
+randUniqueGridCoordIndices gen k =
+  case F.unshift k of
+    Nothing -> []
+    (Just k') -> runST $ f k'
   where
-    s :: (forall s. ST s [F.Finite n])
-    s = do
+    f :: (forall s. F.Finite n -> ST s [F.Finite n])
+    f shuffleIndex = do
       (v :: VGMS.MVector VM.MVector n s (F.Finite n)) <- VGMS.new
       forM_ (enumFrom minBound) (\i -> VGMS.write v i i) --TODO make better with lenses
-      evalRand (shuffleTopKM v k) gen
+      evalRand (shuffleTopKM v shuffleIndex) gen
       (vf :: VGS.Vector V.Vector n (F.Finite n)) <- VGS.freeze v
       return $ take (fromIntegral k) $ toList vf
 
@@ -138,21 +141,21 @@ goWithBoardDims :: forall n n' m. (MonadReader GameSettings m, MonadIO m) =>
 goWithBoardDims sn sn' =
   STL.withKnownNat sn
   $ STL.withKnownNat sn'
-  $ STL.withKnownNat (sn SP.%* sn')
+  $ STL.withKnownNat (sn SP.%* sn') --TODO get rid of with ghc-typelits-knownnat
+  $ STL.withKnownNat (sn SP.%* sn' SP.%+ (SP.sing :: STL.SNat 1))
   $ do
   let dg = (dumbGrid :: Grid V.Vector V.Vector n n' Integer)
       gridLists = gridToList dg
   gr <- liftIO SR.getStdGen
-  evalRandT (do
+  randCoordIndices <- evalRandT (do
     printRandomCoord dg
     gr' <- getSplit
-    let randCoordIndices =
-          randUniqueGridCoordIndices gr'
-          (fromMaybe maxBound $ F.packFinite 4 :: F.Finite (n * n'))
-    --TODO print nums
-    return ())
+    return $
+      randUniqueGridCoordIndices gr'
+      (fromMaybe maxBound $ F.packFinite 4 :: F.Finite (n * n' + 1)))
     gr
   liftIO $ traverse_ (putStrLn . unwords . map show) gridLists -- map then sequence
+  liftIO $ traverse_ (putStrLn . show) randCoordIndices
 
 go :: (MonadReader GameSettings m, MonadIO m) => m ()
 go = do
