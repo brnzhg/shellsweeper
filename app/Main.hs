@@ -13,6 +13,7 @@ ScopedTypeVariables
 , TypeOperators
 , TypeFamilies #-}
 
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 module Main where
 
@@ -48,8 +49,7 @@ import GHC.TypeLits
 import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
 
-
-import Lib --TODO temp module
+import RandomFinite.Vector (shuffleFirstK)
 
 
 type Grid rv cv (n :: Nat) (m :: Nat) =
@@ -76,34 +76,17 @@ gridCoordIndex = LI.iso F.combineProduct getCoord
                    . (`divMod` (fromIntegral . SP.fromSing $ msing))
                    . F.getFinite
 
---is MonadRandom common to do, or better to take in RandomGen?
-randSwapRightM :: forall v n m m' a. (MonadRandom m, PrimMonad m', VGMB.MVector v a, KnownNat n) =>
-  VGS.MVector v n (PrimState m') a -> F.Finite n -> m (m' (F.Finite n))
-randSwapRightM v i = do
-  j <- getRandomR (i, maxBound)
-  return $ do
-    VGMS.swap v i j
-    return j
-
---TODO could be more clever?
-shuffleTopKM :: forall v n m m' a. (MonadRandom m, PrimMonad m', VGMB.MVector v a, KnownNat n) =>
-  VGS.MVector v n (PrimState m') a -> F.Finite n -> m (m' ())
-shuffleTopKM v k = fmap sequence_ $ forM [minBound..k] $ randSwapRightM v
-
-
 --should really go the freeze unfreeze route
-randUniqueGridCoordIndices :: forall g n. (RandomGen g, KnownNat n, KnownNat (n + 1)) =>
+--TODO generalize to map index to applicative functor, take what want? maybe even more?
+randChooseGridCoordIndices :: forall g n. (RandomGen g, KnownNat n) =>
   g -> F.Finite (n + 1) -> [F.Finite n]
-randUniqueGridCoordIndices gen k =
-  case F.unshift k of
-    Nothing -> []
-    (Just k') -> runST $ f k'
+randChooseGridCoordIndices gen k = runST st
   where
-    f :: (forall s. F.Finite n -> ST s [F.Finite n])
-    f shuffleIndex = do
+    st :: (forall s. ST s [F.Finite n])
+    st = do
       (v :: VGMS.MVector VM.MVector n s (F.Finite n)) <- VGMS.new
       forM_ (enumFrom minBound) (\i -> VGMS.write v i i) --TODO make better with lenses
-      evalRand (shuffleTopKM v shuffleIndex) gen
+      evalRand (shuffleFirstK v k) gen
       (vf :: VGS.Vector V.Vector n (F.Finite n)) <- VGS.freeze v
       return $ take (fromIntegral k) $ toList vf
 
@@ -121,7 +104,7 @@ gridToList = VGS.toList . VGS.map VGS.toList . getCompose
 
 --TODO check withSomeSing withKnownNat work for regular Vector n
 printRandomCoord :: forall m n n' a.
-  (MonadRandom m, MonadIO m, KnownNat n, KnownNat n', KnownNat (n * n'), Show a) =>
+  (MonadRandom m, MonadIO m, KnownNat n, KnownNat n', Show a) =>
   Grid V.Vector V.Vector n n' a -> m ()
 printRandomCoord g = do
   randnat <- getRandom
@@ -141,8 +124,7 @@ goWithBoardDims :: forall n n' m. (MonadReader GameSettings m, MonadIO m) =>
 goWithBoardDims sn sn' =
   STL.withKnownNat sn
   $ STL.withKnownNat sn'
-  $ STL.withKnownNat (sn SP.%* sn') --TODO get rid of with ghc-typelits-knownnat
-  $ STL.withKnownNat (sn SP.%* sn' SP.%+ (SP.sing :: STL.SNat 1))
+  -- $ STL.withKnownNat (sn SP.%* sn' SP.%+ (SP.sing :: STL.SNat 1))
   $ do
   let dg = (dumbGrid :: Grid V.Vector V.Vector n n' Integer)
       gridLists = gridToList dg
@@ -151,7 +133,7 @@ goWithBoardDims sn sn' =
     printRandomCoord dg
     gr' <- getSplit
     return $
-      randUniqueGridCoordIndices gr'
+      randChooseGridCoordIndices gr'
       (fromMaybe maxBound $ F.packFinite 4 :: F.Finite (n * n' + 1)))
     gr
   liftIO $ traverse_ (putStrLn . unwords . map show) gridLists -- map then sequence

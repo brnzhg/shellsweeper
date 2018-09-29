@@ -35,6 +35,7 @@ dependencies:
 - comonad
 - adjunctions
 - finite-typelits
+- ghc-typelits-knownnat
 - singletons
 - linear
 - vector-sized

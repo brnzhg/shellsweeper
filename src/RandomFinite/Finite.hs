@@ -1,10 +1,7 @@
-module Lib
-    (
-    ) where
+module RandomFinite.Finite where
 
 import System.Random (Random(..))
 import Data.Finite
---import Numeric.Natural
 import GHC.TypeLits
 
 instance (KnownNat n) => Random (Finite n) where
