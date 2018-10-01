@@ -103,13 +103,6 @@ randChooseGridCoordIndices gen k = runST st
       return $ take (fromIntegral k) $ toList vf
 
 
-gridChooseK :: forall g n n'. (RandomGen g, KnownNat n, KnownNat n') =>
-  g -> F.Finite ((n * n') + 1) -> Grid n n' Bool
-gridChooseK g k = FR.tabulate $ flip elem trueCoords
-  where trueCoords = L.view (L.from gridCoordIndex)
-                     <$> randChooseGridCoordIndices g k
-
-
 packFiniteDefault :: (KnownNat n) => F.Finite n -> Integer -> F.Finite n
 packFiniteDefault defFinite = fromMaybe defFinite . F.packFinite
 
