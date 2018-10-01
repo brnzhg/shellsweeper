@@ -1,5 +1,6 @@
 {-# LANGUAGE
 ScopedTypeVariables
+, DuplicateRecordFields
 , FlexibleContexts
 , FlexibleInstances
 , FunctionalDependencies
@@ -20,7 +21,8 @@ module Main where
 import Data.Foldable
 import Data.Traversable
 import Data.Maybe (fromMaybe)
--- import Data.Functor.Identity (runIdentity)
+import Data.Monoid (Sum(..))
+import Data.Functor.Identity (Identity(..))
 import qualified Data.Bifunctor as BF
 import qualified Data.Functor.Rep as FR
 import Data.Functor.Compose
@@ -28,6 +30,8 @@ import Control.Monad.ST (ST, runST)
 import Control.Monad.IO.Class
 import Control.Monad.Primitive (PrimMonad, PrimState, primToST)
 import Control.Monad.Reader (ask, runReader, runReaderT, Reader, ReaderT, MonadReader)
+import Control.Comonad (Comonad(..))
+import Control.Comonad.Representable.Store (Store, StoreT(..), ComonadStore, store, experiment, runStore)
 import Numeric.Natural
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
@@ -37,12 +41,10 @@ import qualified Data.Singletons.Prelude as SP
 import qualified Data.Singletons.TypeLits as STL
 import qualified Data.Vector.Generic.Sized as VGS
 import qualified Data.Vector.Generic.Mutable.Sized as VGMS
-import qualified Data.Vector.Generic.Base as VGB
-import qualified Data.Vector.Generic.Mutable.Base as VGMB
 --import GHC.Generics
 
 import qualified System.Random as SR
-import Control.Monad.Random (getRandomR, getRandom, MonadRandom, RandomGen, evalRandT, evalRand, getSplit)
+import Control.Monad.Random (getRandomR, getRandom, MonadSplit, MonadRandom, RandomGen, evalRandT, evalRand, getSplit)
 
 import GHC.TypeLits
 
@@ -52,16 +54,26 @@ import qualified Control.Lens.Iso as LI
 import RandomFinite.Vector (shuffleFirstK)
 
 
-type Grid rv cv (n :: Nat) (m :: Nat) =
-  Compose (VGS.Vector rv n) (VGS.Vector cv m)
+type Grid (n :: Nat) (m :: Nat) =
+  Compose (VGS.Vector V.Vector n) (VGS.Vector V.Vector m)
 
 type GridCoord (n :: Nat) (m :: Nat) = (F.Finite n, F.Finite m)
 
 
-data BoardShape = Rect Natural Natural
+data BoardSettings = BoardSettings
+  { height:: Natural
+  , width  :: Natural
+  , mines :: Natural
+  }
 
-data GameSettings = GameSettings {
-  boardShape :: BoardShape }
+data BoardTile = BoardTile
+  { isMine :: Bool
+  , numAdjMines :: Natural
+  } --TODO need lenses (raw tile, vs gamestatetile)
+
+
+data GameSettings = GameSettings
+  { boardSettings :: BoardSettings }
 
 --need GADTs
 --data TestType = forall n n'. Test
@@ -91,72 +103,96 @@ randChooseGridCoordIndices gen k = runST st
       return $ take (fromIntegral k) $ toList vf
 
 
-dumbGrid :: forall n m. (KnownNat n, KnownNat m) => Grid V.Vector V.Vector n m Integer
-dumbGrid = Compose
-  $ VGS.generate (\i -> VGS.generate (\j -> (fromIntegral i) * (fromIntegral . SP.fromSing $ numCols) + (fromIntegral j)))
-  where numCols :: STL.SNat m
-        numCols = SP.Sing
-  --Compose $ VGS.generate (const $ VGS.generate fromIntegral)
+gridChooseK :: forall g n n'. (RandomGen g, KnownNat n, KnownNat n') =>
+  g -> F.Finite ((n * n') + 1) -> Grid n n' Bool
+gridChooseK g k = FR.tabulate $ flip elem trueCoords
+  where trueCoords = L.view (L.from gridCoordIndex)
+                     <$> randChooseGridCoordIndices g k
 
-gridToList :: Grid V.Vector V.Vector n m Integer -> [[Integer]]
+
+packFiniteDefault :: (KnownNat n) => F.Finite n -> Integer -> F.Finite n
+packFiniteDefault defFinite = fromMaybe defFinite . F.packFinite
+
+
+getAdjacent :: forall n n'. (KnownNat n, KnownNat n') =>
+  GridCoord n n' -> [GridCoord n n']
+getAdjacent (r, c) = [(r', c')
+                     | r' <- getAdjOneD r,
+                       c' <- getAdjOneD c,
+                       (r', c') /= (r, c)]
+  where getAdjOneD x = [packFiniteDefault minBound (fromIntegral x - 1)
+                        ..
+                        packFiniteDefault maxBound (fromIntegral x + 1)]
+
+
+prettyPrintTile :: BoardTile -> String
+prettyPrintTile (BoardTile { isMine = isMn, numAdjMines = numAdjMns })
+  | isMn = "*"
+  | numAdjMns == 0 = " "
+  | otherwise = show numAdjMns
+
+
+mineToTileGrid :: (Functor f, Foldable f, ComonadStore s w) =>
+  (s -> f s) -> w Bool -> w BoardTile
+mineToTileGrid getAdj = extend mineGridToTile
+  where
+    countAdjMines = foldMap (\b -> if b then Sum 1 else Sum 0) . experiment getAdj
+    mineGridToTile mineGrid =
+          BoardTile
+          { isMine = extract mineGrid
+          , numAdjMines = fromIntegral . getSum $ countAdjMines mineGrid
+          }
+
+
+
+gridToList :: Grid n m a -> [[a]]
 gridToList = VGS.toList . VGS.map VGS.toList . getCompose
-
-
---TODO check withSomeSing withKnownNat work for regular Vector n
-printRandomCoord :: forall m n n' a.
-  (MonadRandom m, MonadIO m, KnownNat n, KnownNat n', Show a) =>
-  Grid V.Vector V.Vector n n' a -> m ()
-printRandomCoord g = do
-  randnat <- getRandom
-  let randCoord :: GridCoord n n'
-      randCoord = L.view (L.from gridCoordIndex) randnat
-  liftIO $ do
-    putStrLn $ show randnat
-    putStrLn $ show randCoord
-    putStrLn $ show $ FR.index g randCoord
-
 
 --will dim markers
 --eavl rand should probably be in thing before, sets up everything
 --this will be buildboard
 goWithBoardDims :: forall n n' m. (MonadReader GameSettings m, MonadIO m) =>
-  STL.SNat n -> STL.SNat n' -> m ()
-goWithBoardDims sn sn' =
+  STL.SNat n -> STL.SNat n' -> Integer -> m ()
+goWithBoardDims sn sn' numMines =
   STL.withKnownNat sn
   $ STL.withKnownNat sn'
   -- $ STL.withKnownNat (sn SP.%* sn' SP.%+ (SP.sing :: STL.SNat 1))
   $ do
-  let dg = (dumbGrid :: Grid V.Vector V.Vector n n' Integer)
-      gridLists = gridToList dg
+  --    gridLists = gridToList dg
+  let numMinesF = packFiniteDefault maxBound numMines :: F.Finite (n * n' + 1)
   gr <- liftIO SR.getStdGen
-  randCoordIndices <- evalRandT (do
-    printRandomCoord dg
+  mineIndices <- flip evalRandT gr $ do
     gr' <- getSplit
-    return $
-      randChooseGridCoordIndices gr'
-      (fromMaybe maxBound $ F.packFinite 4 :: F.Finite (n * n' + 1)))
-    gr
-  liftIO $ traverse_ (putStrLn . unwords . map show) gridLists -- map then sequence
-  liftIO $ traverse_ (putStrLn . show) randCoordIndices
+    return $ randChooseGridCoordIndices gr' numMinesF
+    --return $ (gridChooseK gr' numMinesF :: Grid n n' Bool)
+  let mineCoords = L.view (L.from gridCoordIndex) <$> mineIndices
+      (StoreT (Identity gt) _) = mineToTileGrid getAdjacent (store (`elem` mineCoords) (minBound, minBound) :: Store (Grid n n') Bool)
+  liftIO $ traverse_ (putStrLn . unwords . map prettyPrintTile) (gridToList $ gt) -- map then sequence
 
 go :: (MonadReader GameSettings m, MonadIO m) => m ()
 go = do
   gs <- ask
-  let (Rect numRows numCols) = boardShape gs
-  SP.withSomeSing numRows
-    (\sn -> SP.withSomeSing numCols
-            (\sn' -> goWithBoardDims sn sn'))
+  let bs = (boardSettings gs :: BoardSettings)
+  go' (height bs) (width bs) (fromIntegral $ mines bs)
+  where go' (SP.FromSing singHeight) (SP.FromSing singWidth) =
+          goWithBoardDims singWidth singHeight
 
 --TODO look at applicative parse to see where to put grid pretty print
-
+--TODO have board settings and TypedNat board settings, make sure mines less
 --bring printing out of main into go
 main :: IO ()
 main = do
   putStrLn "Enter dims:"
-  (numRows :: Natural) <- readLn
-  (numCols :: Natural) <- readLn
+  (h :: Natural) <- readLn --should restrict to positive
+  (w :: Natural) <- readLn
+  putStrLn "Enter num mines:"
+  (numMines :: Natural) <- readLn
   let gs = GameSettings {
-        boardShape = Rect numRows numCols }
+        boardSettings = BoardSettings
+        { height = h
+        , width = w
+        , mines = numMines
+        }}
   runReaderT go gs
   putStrLn "FINISHED!"
 
