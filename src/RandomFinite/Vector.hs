@@ -2,7 +2,6 @@
 ScopedTypeVariables
 , FlexibleContexts
 , DataKinds
-, TypeApplications
 , TypeOperators
 #-}
 

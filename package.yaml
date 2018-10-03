@@ -40,6 +40,8 @@ dependencies:
 - linear
 - vector-sized
 - fgl
+- hashable
+- hashtables
 
 library:
   source-dirs: src

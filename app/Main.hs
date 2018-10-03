@@ -43,6 +43,10 @@ import qualified Data.Vector.Generic.Sized as VGS
 import qualified Data.Vector.Generic.Mutable.Sized as VGMS
 --import GHC.Generics
 
+import Data.Hashable (Hashable(..))
+import qualified Data.HashTable.Class as HTC
+import qualified Data.HashTable.ST.Basic as HTB
+
 import qualified System.Random as SR
 import Control.Monad.Random (getRandomR, getRandom, MonadSplit, MonadRandom, RandomGen, evalRandT, evalRand, getSplit)
 
@@ -75,6 +79,11 @@ data BoardTile = BoardTile
 data GameSettings = GameSettings
   { boardSettings :: BoardSettings }
 
+
+--TODO move this BS
+instance (KnownNat n) => Hashable (F.Finite n) where
+  hashWithSalt i x = hashWithSalt i (fromIntegral x :: Integer)
+
 --need GADTs
 --data TestType = forall n n'. Test
 
@@ -104,7 +113,7 @@ randChooseGridCoordIndices gen k = runST st
 
 
 packFiniteDefault :: (KnownNat n) => F.Finite n -> Integer -> F.Finite n
-packFiniteDefault defFinite = fromMaybe defFinite . F.packFinite
+packFiniteDefault = (. F.packFinite) . fromMaybe
 
 
 getAdjacent :: forall n n'. (KnownNat n, KnownNat n') =>
@@ -137,6 +146,45 @@ mineToTileGrid getAdj = extend mineGridToTile
           }
 
 
+--dumbDfs :: (ComonadStore s w) =>
+--  w (a, Bool) -> (s -> [s]) -> [s] -> [a]
+-- dumbDfs :: FR.Representable g => Store g Bool -> (FR.Rep g -> [FR.Rep g]) -> [FR.Rep g] -> [FR.Rep g]
+
+--TODO get a State monad with hashtable and stack inside!!, function takes in State monad and outputs in ST
+--could maybe fmapAccumL as well.. who knows
+firstDfs :: forall h s k. (Eq k, Hashable k, HTC.HashTable h) =>
+  (k -> [k]) -> h s k () -> [k] -> ST s [k]
+firstDfs _ _ [] = return []
+firstDfs adj ht (x:xs) = do
+  found <- HTC.mutate ht x f
+  if found
+    then firstDfs adj ht xs
+    else (x:) <$> firstDfs adj ht (adj x ++ xs)
+  where f Nothing = (Just (), False)
+        f _ = (Just (), True)
+{- 
+  HTC.mutateST ht x f
+  where f Nothing = do
+          r <- firstDfs adj ht (adj x ++ xs)
+          return (Just (), x:r)
+        f _ = do
+          r <- firstDfs adj ht xs
+          return (Nothing, r)
+-}
+
+
+firstDfsSimple :: forall k. (Eq k, Hashable k) =>
+  (k -> [k]) -> k -> [k]
+firstDfsSimple adj x = runST $ do
+  ht <- HTB.new
+  firstDfs adj ht [x]
+
+
+--TODO need to change this, this is good if current tile is not mine and has 0 adj mines, otherwise show no neighbors
+firstDfsNonMine :: forall n n'. (KnownNat n, KnownNat n') =>
+  Grid n n' BoardTile -> GridCoord n n' -> [GridCoord n n']
+firstDfsNonMine gr = firstDfsSimple $ filter (not . isMine . FR.index gr) . getAdjacent
+
 
 gridToList :: Grid n m a -> [[a]]
 gridToList = VGS.toList . VGS.map VGS.toList . getCompose
@@ -159,8 +207,23 @@ goWithBoardDims sn sn' numMines =
     return $ randChooseGridCoordIndices gr' numMinesF
     --return $ (gridChooseK gr' numMinesF :: Grid n n' Bool)
   let mineCoords = L.view (L.from gridCoordIndex) <$> mineIndices
-      (StoreT (Identity gt) _) = mineToTileGrid getAdjacent (store (`elem` mineCoords) (minBound, minBound) :: Store (Grid n n') Bool)
-  liftIO $ traverse_ (putStrLn . unwords . map prettyPrintTile) (gridToList $ gt) -- map then sequence
+      storeMineGrid = store (`elem` mineCoords) (minBound, minBound) :: Store (Grid n n') Bool
+      (StoreT (Identity gt) _) = mineToTileGrid getAdjacent storeMineGrid
+  liftIO $ do
+    traverse_ (putStrLn . unwords . map prettyPrintTile) $ gridToList gt -- map then sequence
+    putStrLn "Enter point:"
+    (y0 :: Natural) <- readLn
+    (x0 :: Natural) <- readLn
+    putStrLn "OK..."
+    let parsedStartCoord = do
+          fy0 <- F.packFinite . fromIntegral $ y0
+          fx0 <- F.packFinite . fromIntegral $ x0
+          return ((fy0, fx0) :: GridCoord n n')
+    case parsedStartCoord of
+      Nothing -> putStrLn "Invalid point"
+      Just startCoord -> putStrLn $ unwords . fmap show $ firstDfsNonMine gt startCoord
+
+    
 
 go :: (MonadReader GameSettings m, MonadIO m) => m ()
 go = do
