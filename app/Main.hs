@@ -20,13 +20,14 @@ module Main where
 
 import Data.Foldable
 import Data.Traversable
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing)
 import Data.Monoid (Sum(..))
 import Data.Functor.Identity (Identity(..))
 import qualified Data.Bifunctor as BF
 import qualified Data.Functor.Rep as FR
 import Data.Functor.Compose
 import Control.Monad.ST (ST, runST)
+import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.IO.Class
 import Control.Monad.Primitive (PrimMonad, PrimState, primToST)
 import Control.Monad.Reader (ask, runReader, runReaderT, Reader, ReaderT, MonadReader)
@@ -150,27 +151,15 @@ mineToTileGrid getAdj = extend mineGridToTile
 --  w (a, Bool) -> (s -> [s]) -> [s] -> [a]
 -- dumbDfs :: FR.Representable g => Store g Bool -> (FR.Rep g -> [FR.Rep g]) -> [FR.Rep g] -> [FR.Rep g]
 
---TODO get a State monad with hashtable and stack inside!!, function takes in State monad and outputs in ST
---could maybe fmapAccumL as well.. who knows
+{-
 firstDfs :: forall h s k. (Eq k, Hashable k, HTC.HashTable h) =>
   (k -> [k]) -> h s k () -> [k] -> ST s [k]
 firstDfs _ _ [] = return []
 firstDfs adj ht (x:xs) = do
-  found <- HTC.mutate ht x f
+  found <- HTC.mutate ht x (\x' -> (Just (), isJust x'))
   if found
     then firstDfs adj ht xs
     else (x:) <$> firstDfs adj ht (adj x ++ xs)
-  where f Nothing = (Just (), False)
-        f _ = (Just (), True)
-{- 
-  HTC.mutateST ht x f
-  where f Nothing = do
-          r <- firstDfs adj ht (adj x ++ xs)
-          return (Just (), x:r)
-        f _ = do
-          r <- firstDfs adj ht xs
-          return (Nothing, r)
--}
 
 
 firstDfsSimple :: forall k. (Eq k, Hashable k) =>
@@ -178,12 +167,36 @@ firstDfsSimple :: forall k. (Eq k, Hashable k) =>
 firstDfsSimple adj x = runST $ do
   ht <- HTB.new
   firstDfs adj ht [x]
-
+-}
 
 --TODO need to change this, this is good if current tile is not mine and has 0 adj mines, otherwise show no neighbors
 firstDfsNonMine :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTile -> GridCoord n n' -> [GridCoord n n']
-firstDfsNonMine gr = firstDfsSimple $ filter (not . isMine . FR.index gr) . getAdjacent
+firstDfsNonMine gr = stateDfsSimple $ filter (not . isMine . FR.index gr) . getAdjacent
+--firstDfsSimple
+
+
+stateDfs :: forall h s k. (Eq k, Hashable k, HTC.HashTable h) =>
+  (k -> [k]) -> StateT (h s k (), [k]) (ST s) [k]
+stateDfs f = do
+  (ht, q) <- get
+  case q of
+    [] -> return []
+    (x:xs) -> do
+      found <- lift
+               $ HTC.mutate ht x
+               $ \x' -> (Just (), isJust x')
+      if found
+        then put (ht, xs) >> stateDfs f
+        else fmap (x:) $ put (ht, f x ++ xs) >> (stateDfs f)
+
+stateDfsSimple :: forall k. (Eq k, Hashable k) =>
+  (k -> [k]) -> k -> [k]
+stateDfsSimple f x = runST $ do
+  ht <- HTB.new
+  evalStateT (stateDfs f) (ht, [x])
+
+
 
 
 gridToList :: Grid n m a -> [[a]]
