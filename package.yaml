@@ -28,6 +28,7 @@ dependencies:
 - vector
 - ansi-wl-pprint
 - mtl
+- monad-loops
 - exceptions
 - lens
 - optparse-applicative
@@ -37,9 +38,7 @@ dependencies:
 - finite-typelits
 - ghc-typelits-knownnat
 - singletons
-- linear
 - vector-sized
-- fgl
 - hashable
 - hashtables
 
