@@ -26,7 +26,7 @@ import Data.Functor.Identity (Identity(..))
 import qualified Data.Bifunctor as BF
 import qualified Data.Functor.Rep as FR
 import Data.Functor.Compose
-import Control.Monad.Loops (unfoldM)
+import Control.Monad.Loops (unfoldM, dropWhileM)
 import Control.Monad.ST (ST, runST)
 import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.IO.Class
@@ -156,47 +156,21 @@ mineToTileGrid getAdj = extend mineGridToTile
 --TODO need to change this, this is good if current tile is not mine and has 0 adj mines, otherwise show no neighbors
 firstDfsNonMine :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTile -> GridCoord n n' -> [GridCoord n n']
-firstDfsNonMine gr = stateDfsSimple $ filter (not . isMine . FR.index gr) . getAdjacent
+firstDfsNonMine gr = unfoldDfs $ filter (not . isMine . FR.index gr) . getAdjacent
 --firstDfsSimple
-
-
-stateDfs :: forall h s k. (Eq k, Hashable k, HTC.HashTable h) =>
-  (k -> [k]) -> StateT (h s k (), [k]) (ST s) [k]
-stateDfs f = do
-  (ht, q) <- get
-  case q of
-    [] -> return []
-    (x:xs) -> do
-      found <- lift
-               $ HTC.mutate ht x
-               $ \x' -> (Just (), isJust x')
-      if found
-        then put (ht, xs) >> stateDfs f
-        else fmap (x:) $ put (ht, f x ++ xs) >> (stateDfs f)
-
-stateDfsSimple :: forall k. (Eq k, Hashable k) =>
-  (k -> [k]) -> k -> [k]
-stateDfsSimple f x = runST $ do
-  ht <- HTB.new
-  evalStateT (stateDfs f) (ht, [x])
-
-
 
 
 
 unfoldDfsStep :: forall h s k. (Eq k, Hashable k, HTC.HashTable h) =>
-  (k -> [k]) -> StateT (h s k (), [k]) (ST s) (Maybe (Maybe k))
+  (k -> [k]) -> StateT (h s k (), [k]) (ST s) (Maybe k)
 unfoldDfsStep f = do
   (ht, q) <- get
-  case q of
-    [] -> return Nothing
-    (x:xs) -> do
-      found <- lift
-               $ HTC.mutate ht x
-               $ \x' -> (Just (), isJust x')
-      if found
-        then put (ht, xs) >> (return $ Just Nothing)
-        else put (ht, f x ++ xs) >> (return $ Just (Just x))
+  q' <- lift $ flip dropWhileM q
+        $ \x -> HTC.mutate ht x
+                $ \x' -> (Just (), isJust x')
+  case q' of
+    [] -> put (ht, []) >> (return Nothing)
+    (x:xs) -> put (ht, f x ++ xs) >> (return $ Just x)
 
 
 --TODO cand do with MonadPlus version, kinda cool i guess (zipper dream?)
@@ -205,8 +179,8 @@ unfoldDfs :: forall k. (Eq k, Hashable k) =>
 unfoldDfs f x = runST $ do
   ht <- HTB.new
   flip evalStateT (ht, [x])
-    $ fmap catMaybes
-    $ (unfoldM $ unfoldDfsStep f)
+    $ unfoldM
+    $ unfoldDfsStep f
 
 
 
