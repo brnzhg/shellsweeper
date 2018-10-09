@@ -34,6 +34,7 @@ import Control.Monad.Primitive (PrimMonad, PrimState, primToST)
 import Control.Monad.Reader (ask, runReader, runReaderT, Reader, ReaderT, MonadReader)
 import Control.Comonad (Comonad(..))
 import Control.Comonad.Representable.Store (Store, StoreT(..), ComonadStore, store, experiment, runStore)
+import Control.Arrow ((&&&))
 import Numeric.Natural
 import qualified Data.Vector as V
 import qualified Data.Vector.Mutable as VM
@@ -156,8 +157,16 @@ mineToTileGrid getAdj = extend mineGridToTile
 --TODO need to change this, this is good if current tile is not mine and has 0 adj mines, otherwise show no neighbors
 firstDfsNonMine :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTile -> GridCoord n n' -> [GridCoord n n']
-firstDfsNonMine gr = unfoldDfs $ filter (not . isMine . FR.index gr) . getAdjacent
---firstDfsSimple
+firstDfsNonMine gr = unfoldDfs getNeighbors
+  where getNeighbors coord
+          | uncurry (||)
+            . (isMine &&& ((> 0) . numAdjMines))
+            . FR.index gr $ coord = []
+          | otherwise = filter (not . isMine . FR.index gr) . getAdjacent $ coord
+
+--filter (uncurry (&&) . ((not . isMine) &&& ((== 0) . numAdjMines)) . FR.index gr) . getAdjacent
+
+
 
 
 
