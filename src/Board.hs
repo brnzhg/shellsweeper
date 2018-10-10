@@ -53,3 +53,13 @@ mineToTileGrid getAdj = extend mineGridToTile
           }
 
 --TODO pretty print BoardTile and Board
+
+{-
+
+ / \ / \
+| 1 | * |
+ \ / \ /
+  | 3 |
+   \ /
+
+-}
