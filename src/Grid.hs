@@ -74,10 +74,10 @@ gridToVecOfVec (Grid gr) =
 
 gridToListOfList :: forall n n' a. (KnownNat n, KnownNat n') => Grid n n' a -> [[a]]
 gridToListOfList (Grid gr) = evalState
-                             (replicateM (fromIntegral $ (maxBound :: Finite n)) m)
+                             . replicateM (fromIntegral (maxBound :: Finite n)) m
                              $ toList gr
   where
-    m = state $ splitAt (fromIntegral $ (maxBound :: Finite n'))
+    m = state $ splitAt $ fromIntegral (maxBound :: Finite n')
 
 
 {-
