@@ -35,7 +35,7 @@ import qualified Data.Singletons.TypeLits as STL
 import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
 
-import ChooseFinite (chooseAndSwapIndicesToK, indexPermutation)
+--import ChooseFinite (chooseAndSwapIndicesToK, indexPermutation)
 import Data.Finite.Extras (packFiniteDefault)
 
 
