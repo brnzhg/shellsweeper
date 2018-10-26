@@ -3,6 +3,9 @@ ScopedTypeVariables
 , DataKinds
 , TypeOperators
 , KindSignatures
+, RankNTypes
+, UndecidableInstances
+, AllowAmbiguousTypes
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -11,21 +14,29 @@ module Board () where
 
 
 import Data.Monoid (Sum(..))
+
+import Data.Finite (Finite)
+import Data.Functor.Identity (Identity(..))
 import Control.Comonad (Comonad(..))
-import Control.Comonad.Representable.Store (Store, StoreT(..), ComonadStore, store, experiment, runStore)
+import Control.Comonad.Representable.Store
+  (Store, StoreT(..), ComonadStore, store, experiment, runStore)
+import Control.Arrow ((&&&))
 
 import Numeric.Natural
 
-import qualified Data.Vector as V
+--import qualified Data.Vector as V
 import qualified Data.Vector.Sized as VS
 
 import GHC.TypeLits
-import qualified Data.Singletons.Prelude as SP
-import qualified Data.Singletons.TypeLits as STL
+--import qualified Data.Singletons.Prelude as SP
+--import qualified Data.Singletons.TypeLits as STL
+
+import qualified Control.Lens as L
+--import qualified Control.Lens.Iso as LI
+--import qualified Control.Lens.Traversal as LT
 
 import ChooseFinite (chooseAndSwapIndicesToK)
 import Data.Finite.Extras (packFiniteDefault)
-import qualified Grid
 
 
 data BoardTile = BoardTile
@@ -36,30 +47,73 @@ data BoardTile = BoardTile
   } --TODO need lenses (raw tile, vs gamestatetile)
 
 
---TODO generate random new board
+foldExperiment :: (Functor f, Foldable f, Monoid b, ComonadStore s w) =>
+  (s -> f s) -> (a -> b) -> w a -> b
+foldExperiment f g = foldMap g . experiment f
 
---TODO seems awkward
-mineToTileGrid :: (Functor f, Foldable f, ComonadStore s w) =>
-  (s -> f s) -> w Bool -> w BoardTile
-mineToTileGrid getAdj = extend mineGridToTile
+
+tileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
+  (s -> f s) -> w Bool -> BoardTile
+tileFromMineStore getAdj mineStore =
+  BoardTile { isMine = isMine'
+            , numAdjMines = numAdjMines'
+            , revealed = False
+            , flagged = False
+            }
   where
-    countAdjMines = foldMap (\b -> if b then Sum 1 else Sum 0) . experiment getAdj
-    mineGridToTile mineGrid =
-          BoardTile
-          { isMine = extract mineGrid
-          , numAdjMines = fromIntegral . getSum $ countAdjMines mineGrid
-          , revealed = False
-          , flagged = False
-          }
+    getNumAdjMines =  fromIntegral
+                      . getSum
+                      . foldMap (\b -> if b then Sum 1 else Sum 0)
+                      . experiment getAdj
+    (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
+
+makeTileVector :: forall f n. (Functor f, Foldable f, KnownNat n) =>
+  (Finite n -> f (Finite n)) -> [Finite n] -> VS.Vector n BoardTile
+makeTileVector getAdj mineIndices = tileV
+  where
+    mineV = VS.replicate False VS.// (zip mineIndices $ repeat True)
+    (StoreT (Identity tileV) _) = extend (tileFromMineStore getAdj)
+                                  $ StoreT (Identity mineV) minBound
+
+{-
+makeTileGrid :: forall n n'. (KnownNat n, KnownNat n') =>
+  [Grid.GridIndex n n'] -> Grid.Grid n n' BoardTile
+makeTileGrid mineIndices = gt
+  where
+    mineGrid = VS.replicate False VS.// (zip mineIndices $ repeat True)
+-- type alias LI.Iso' (Grid.GridIndex n n') (Grid.GridCoord n n')
+    gridIndexCoord =
+      Grid.gridIndexCoord :: LI.Iso' (Grid.GridIndex n n') (Grid.GridCoord n n')
+    (StoreT (Identity gt) _) =
+      mineToTileStore (LT.traverseOf gridIndexCoord Grid.squareAdjacentCoords)
+      $ StoreT (Identity mineGrid) minBound
+-}
+
+
+
 
 --TODO pretty print BoardTile and Board
 
 {-
+   _________
+  /        /|
+ /________/ |
+ |        | |
+ |        | |
+ |        | /
+ |________|/
 
- / \ / \
+ / \ / \ /
 | 1 | * |
- \ / \ /
-  | 3 |
-   \ /
+ \ / \ / \
+  | 3 | * |
+ / \ / \ /
+| * | 1 |
+
+-x---x---x---
+/2\*/2\1/1\1/
+---x---x---x-
+\2/*\2/1\*/1\
+-x---x---x---x
 
 -}
