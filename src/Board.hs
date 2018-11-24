@@ -8,10 +8,10 @@ ScopedTypeVariables
 , AllowAmbiguousTypes
 #-}
 
-{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
-
-module Board () where
-
+module Board (
+  BoardTile(..)
+  , makeTileVector
+  ) where
 
 import Data.Monoid (Sum(..))
 
@@ -35,21 +35,17 @@ import qualified Control.Lens as L
 --import qualified Control.Lens.Iso as LI
 --import qualified Control.Lens.Traversal as LT
 
-import ChooseFinite (chooseAndSwapIndicesToK)
-import Data.Finite.Extras (packFiniteDefault)
-
 
 data BoardTile = BoardTile
   { isMine :: Bool
   , numAdjMines :: Natural
-  , revealed :: Bool
-  , flagged :: Bool
-  } --TODO need lenses (raw tile, vs gamestatetile)
+  } --TODO need lenses
 
 
-foldExperiment :: (Functor f, Foldable f, Monoid b, ComonadStore s w) =>
-  (s -> f s) -> (a -> b) -> w a -> b
-foldExperiment f g = foldMap g . experiment f
+--TODO think if there's something more general here
+--foldExperiment :: (Functor f, Foldable f, Monoid b, ComonadStore s w) =>
+--  (s -> f s) -> (a -> b) -> w a -> b
+--foldExperiment f g = foldMap g . experiment f
 
 
 tileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
@@ -57,8 +53,6 @@ tileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
 tileFromMineStore getAdj mineStore =
   BoardTile { isMine = isMine'
             , numAdjMines = numAdjMines'
-            , revealed = False
-            , flagged = False
             }
   where
     getNumAdjMines =  fromIntegral
@@ -74,21 +68,6 @@ makeTileVector getAdj mineIndices = tileV
     mineV = VS.replicate False VS.// (zip mineIndices $ repeat True)
     (StoreT (Identity tileV) _) = extend (tileFromMineStore getAdj)
                                   $ StoreT (Identity mineV) minBound
-
-{-
-makeTileGrid :: forall n n'. (KnownNat n, KnownNat n') =>
-  [Grid.GridIndex n n'] -> Grid.Grid n n' BoardTile
-makeTileGrid mineIndices = gt
-  where
-    mineGrid = VS.replicate False VS.// (zip mineIndices $ repeat True)
--- type alias LI.Iso' (Grid.GridIndex n n') (Grid.GridCoord n n')
-    gridIndexCoord =
-      Grid.gridIndexCoord :: LI.Iso' (Grid.GridIndex n n') (Grid.GridCoord n n')
-    (StoreT (Identity gt) _) =
-      mineToTileStore (LT.traverseOf gridIndexCoord Grid.squareAdjacentCoords)
-      $ StoreT (Identity mineGrid) minBound
--}
-
 
 
 
