@@ -63,7 +63,7 @@ data GameState (n :: Nat) (n' :: Nat) = GameState
 
 data GameEnv (n :: Nat) (n' :: Nat) = GameEnv
   { _numMines :: Finite (n * n' + 1)
-  , getAdj :: Finite (n * n') -> [Finite (n * n')]
+  , _getAdj :: Finite (n * n') -> [Finite (n * n')]
   --, _getAdj :: GridCoord n n' -> [GridCoord n n']
   }
 
@@ -105,7 +105,7 @@ randomStartGameState :: forall n n' m.
   (KnownNat n, KnownNat n', MonadInterleave m) =>
   GameEnv n n' -> m (GameState n n')
 randomStartGameState gameEnv =
-  startGameStateFromTileGrid <$> (randomTileGrid :: Grid n n' BoardTile)
+  startGameStateFromTileGrid <$> (randomTileGrid :: m (Grid n n' BoardTile))
   where
     randomTileGrid :: m (VS.Vector (n * n') BoardTile)
     randomTileGrid =

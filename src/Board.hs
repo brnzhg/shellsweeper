@@ -111,9 +111,9 @@ randomMineVector numMines =
   mineVectorFromIndexPairs numMines
   <$> (indexPairsChooseK numMines)
 
-randomTileVector :: forall n m.
-  (KnownNat n, MonadInterleave m) =>
-  (Finite n -> [Finite n])
+randomTileVector :: forall f n m.
+  (Functor f, Foldable f, KnownNat n, MonadInterleave m) =>
+  (Finite n -> f (Finite n))
   -> Finite (n + 1)
   -> m (VS.Vector n BoardTile)
 randomTileVector getAdj =
