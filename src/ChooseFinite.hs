@@ -10,7 +10,6 @@ ScopedTypeVariables
 
 module ChooseFinite (
 RFinite(..)
-, swapIndexPairs
 , indexPairsChooseK
 , indexPairsPermuteAll
 ) where
@@ -21,12 +20,7 @@ import GHC.List (take)
 import GHC.TypeLits
 
 import Data.Traversable
-import Control.Monad (forM_)
 import Control.Monad.Random (MonadInterleave, getRandomR, interleave)
-import Control.Monad.Primitive (PrimMonad, PrimState)
-
-import qualified Data.Vector.Generic.Mutable.Base as V
-import qualified Data.Vector.Generic.Mutable.Sized as VS
 
 
 newtype RFinite a = RFinite { getFin :: Finite a }
@@ -38,16 +32,6 @@ instance (KnownNat n) => Random (RFinite n) where
             randomR (fromIntegral a, fromIntegral b) g
 
   random = randomR (minBound, maxBound)
-
-
-swapIndexPairs :: forall v n m a.
-  (PrimMonad m
-  , KnownNat n
-  , V.MVector v a) =>
-  [(Finite n, Finite n)]
-  -> VS.MVector v n (PrimState m) a
-  -> m ()
-swapIndexPairs = (. uncurry . VS.swap) . forM_
 
 indexPairsChooseK :: forall n m.
   (MonadInterleave m

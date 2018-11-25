@@ -17,7 +17,6 @@ module Game() where
 import Data.Foldable --
 import Data.Traversable --
 
-import Control.Monad.ST (ST, runST)
 import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.Random (MonadInterleave)
 
@@ -29,9 +28,8 @@ import qualified Data.Vector.Sized as VS
 import qualified Data.Vector.Generic.Mutable.Base as VGM
 import qualified Data.Vector.Generic.Mutable.Sized as VGMS
 
-import ChooseFinite (swapIndexPairs, indexPairsChooseK)
 import Grid (Grid(..), GridCoord(..), GridIndex(..), gridIndexCoord)
-import Board (BoardTile(..), makeTileVector)
+import Board (BoardTile(..))
 
 
 data BoardTileState = BoardTileState

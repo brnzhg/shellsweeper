@@ -8,15 +8,22 @@ ScopedTypeVariables
 , AllowAmbiguousTypes
 #-}
 
+{-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
+
 module Board (
   BoardTile(..)
-  , makeTileVector
+  , tileVectorFromMines
   ) where
 
 import Data.Monoid (Sum(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
+import Data.Traversable
+import Control.Monad (forM_)
+import Control.Monad.ST (ST, runST)
+import Control.Monad.Random (MonadInterleave, interleave)
+import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Comonad (Comonad(..))
 import Control.Comonad.Representable.Store
   (Store, StoreT(..), ComonadStore, store, experiment, runStore)
@@ -25,7 +32,10 @@ import Control.Arrow ((&&&))
 import Numeric.Natural
 
 --import qualified Data.Vector as V
+import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Sized as VS
+import qualified Data.Vector.Mutable.Sized as VMS
+
 
 import GHC.TypeLits
 --import qualified Data.Singletons.Prelude as SP
@@ -34,6 +44,8 @@ import GHC.TypeLits
 import qualified Control.Lens as L
 --import qualified Control.Lens.Iso as LI
 --import qualified Control.Lens.Traversal as LT
+
+import ChooseFinite (indexPairsChooseK)
 
 
 data BoardTile = BoardTile
@@ -61,14 +73,40 @@ tileFromMineStore getAdj mineStore =
                       . experiment getAdj
     (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
 
-makeTileVector :: forall f n. (Functor f, Foldable f, KnownNat n) =>
-  (Finite n -> f (Finite n)) -> [Finite n] -> VS.Vector n BoardTile
-makeTileVector getAdj mineIndices = tileV
+tileVectorFromMines :: forall f n.
+  (Functor f, Foldable f, KnownNat n) =>
+  (Finite n -> f (Finite n))
+  -> VS.Vector n Bool
+  -> VS.Vector n BoardTile
+tileVectorFromMines getAdj mineV = tileV
   where
-    mineV = VS.replicate False VS.// (zip mineIndices $ repeat True)
+    --mineV = VS.replicate False VS.// (zip mineIndices $ repeat True)
     (StoreT (Identity tileV) _) = extend (tileFromMineStore getAdj)
                                   $ StoreT (Identity mineV) minBound
 
+mineVectorFromIndexPairs :: forall n.
+  KnownNat n =>
+  Finite (n + 1)
+  -> [(Finite n, Finite n)]
+  -> VS.Vector n Bool
+mineVectorFromIndexPairs numMines indexPairs =
+  runST st
+  where
+    st :: (forall s. ST s (VS.Vector n Bool))
+    st = do
+      v :: VMS.MVector n s Bool <- VMS.new
+      forM_ (take (fromIntegral numMines) $ enumFrom minBound)
+        (\i -> VMS.write v i True)
+      forM_ indexPairs $ uncurry $ VMS.swap v
+      v' <- VS.freeze v
+      return v'
+
+randomMineVector :: forall n m.
+  (KnownNat n, MonadInterleave m) =>
+  Finite (n + 1) -> m (VS.Vector n Bool)
+randomMineVector numMines =
+  mineVectorFromIndexPairs numMines
+  <$> (indexPairsChooseK numMines)
 
 
 --TODO pretty print BoardTile and Board
