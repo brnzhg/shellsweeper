@@ -60,8 +60,6 @@ gridIndexCoord = LI.iso getCoord combineProduct
                    . getFinite
 
 
-
-
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   GridCoord n n' -> [GridCoord n n']
 squareAdjacentCoords (r, c) = [(r', c')

@@ -13,6 +13,9 @@ ScopedTypeVariables
 module Board (
   BoardTile(..)
   , tileVectorFromMines
+  , mineVectorFromIndexPairs
+  , randomMineVector
+  , randomTileVector
   ) where
 
 import Data.Monoid (Sum(..))
@@ -49,8 +52,8 @@ import ChooseFinite (indexPairsChooseK)
 
 
 data BoardTile = BoardTile
-  { isMine :: Bool
-  , numAdjMines :: Natural
+  { _isMine :: Bool
+  , _numAdjMines :: Natural
   } --TODO need lenses
 
 
@@ -63,8 +66,8 @@ data BoardTile = BoardTile
 tileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
   (s -> f s) -> w Bool -> BoardTile
 tileFromMineStore getAdj mineStore =
-  BoardTile { isMine = isMine'
-            , numAdjMines = numAdjMines'
+  BoardTile { _isMine = isMine'
+            , _numAdjMines = numAdjMines'
             }
   where
     getNumAdjMines =  fromIntegral
@@ -108,9 +111,9 @@ randomMineVector numMines =
   mineVectorFromIndexPairs numMines
   <$> (indexPairsChooseK numMines)
 
-randomTileVector :: forall f n m.
-  (Functor f, Foldable f, KnownNat n, MonadInterleave m) =>
-  (Finite n -> f (Finite n))
+randomTileVector :: forall n m.
+  (KnownNat n, MonadInterleave m) =>
+  (Finite n -> [Finite n])
   -> Finite (n + 1)
   -> m (VS.Vector n BoardTile)
 randomTileVector getAdj =
