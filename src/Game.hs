@@ -43,23 +43,9 @@ import Board (BoardTile(..)
               , randomMineVector
               , randomTileVector)
 
-
-data BoardTileState = BoardTileState
-  { _tile :: BoardTile
-  , _isRevealed :: Bool
-  , _isMarked :: Bool
-  }
---this could be thing in State Monad
---add numAdjMineMarked
-
-data BoardState (n :: Nat) (n' :: Nat) = BoardState
-  { _tileGrid :: Grid n n' BoardTileState
-  , _numRevealed :: Finite (n * n' + 1)
-  , _numMarked :: Finite (n * n' + 1)
-  }
-
 data GameEndState = WinState | LoseState
 
+{-
 data GameState (n :: Nat) (n' :: Nat) = GameState
   { _board :: BoardState n n'
   , _gameEnd :: Maybe GameEndState
@@ -67,10 +53,9 @@ data GameState (n :: Nat) (n' :: Nat) = GameState
 
 data GameEnv (n :: Nat) (n' :: Nat) = GameEnv
   { _numMines :: Finite (n * n' + 1)
-  --, _getAdj :: Finite (n * n') -> [Finite (n * n')]
   , _getAdj :: GridCoord n n' -> [GridCoord n n']
   }
-
+-}
 --gamestate has score? parameterize it later?
 --has win or lose or something (maybe bool iswin)
 
@@ -81,50 +66,5 @@ data GameEnv (n :: Nat) (n' :: Nat) = GameEnv
 
 --TODO doesn't require anythign from current game env
 --might later, better to split env by interface
-startGameStateFromTileGrid :: forall n n'.
-  (KnownNat n, KnownNat n') =>
-  Grid n n' BoardTile -> GameState n n'
-startGameStateFromTileGrid g =
-  GameState { _board = startBoardState
-            , _gameEnd = Nothing
-            }
-  where
-    makeStartTileState t =
-      BoardTileState { _tile = t
-                     , _isRevealed = False
-                     , _isMarked = False
-                     }
-    startGridState = makeStartTileState <$> g
-    startBoardState =
-      BoardState { _tileGrid = startGridState
-                 , _numRevealed = 0
-                 , _numMarked = 0
-                 }
 
 
-startGameStateFromCoordPairs :: forall n n'.
-  (KnownNat n, KnownNat n') =>
-  GameEnv n n'
-  -> [(GridCoord n n', GridCoord n n')]
-  -> GameState n n'
-startGameStateFromCoordPairs gameEnv =
-  startGameStateFromTileGrid
-  . tileVectorFromIndexPairs'
-  . L.over (L.mapped . L.both) (L.view $ LI.from gridIndexCoord)
-  where
-    tileVectorFromIndexPairs' = tileVectorFromMines getAdj'
-                                . mineVectorFromIndexPairs'
-    getAdj' = LT.traverseOf gridIndexCoord . _getAdj $ gameEnv
-    mineVectorFromIndexPairs' = mineVectorFromIndexPairs
-                                . _numMines
-                                $ gameEnv
-
---TODO use monadreader herer
---make gameenv more modular like the font
-randomStartGameState :: forall n n' m.
-  (KnownNat n, KnownNat n', MonadInterleave m) =>
-  GameEnv n n' -> m (GameState n n')
-randomStartGameState gameEnv =
-  startGameStateFromCoordPairs gameEnv
-  . L.over (L.mapped . L.both) (L.view gridIndexCoord)
-  <$> (indexPairsChooseK $ _numMines gameEnv)

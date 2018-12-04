@@ -6,6 +6,8 @@ ScopedTypeVariables
 , RankNTypes
 , UndecidableInstances
 , AllowAmbiguousTypes
+, MultiParamTypeClasses
+, TypeFamilies
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -14,14 +16,14 @@ module Board (
   BoardTile(..)
   , tileVectorFromMines
   , mineVectorFromIndexPairs
-  , randomMineVector
-  , randomTileVector
   ) where
 
 import Data.Monoid (Sum(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
+import Data.Functor.Rep as FR
+import Data.Monoid (Any(..))
 import Data.Traversable
 import Control.Monad (forM_)
 import Control.Monad.ST (ST, runST)
@@ -45,16 +47,36 @@ import GHC.TypeLits
 --import qualified Data.Singletons.TypeLits as STL
 
 import qualified Control.Lens as L
---import qualified Control.Lens.Iso as LI
---import qualified Control.Lens.Traversal as LT
+import qualified Control.Lens.Iso as LI
+import qualified Control.Lens.Traversal as LT
 
 import ChooseFinite (indexPairsChooseK)
-
+import Grid (Grid(..), GridCoord(..), GridIndex(..), gridIndexCoord)
+import Graph (unfoldDfs)
 
 data BoardTile = BoardTile
   { _isMine :: Bool
   , _numAdjMines :: Natural
   } --TODO need lenses
+
+data BoardTileState = BoardTileState
+  { _tile :: BoardTile
+  , _isRevealed :: Bool
+  , _isMarked :: Bool
+  }
+--this could be thing in State Monad
+--add numAdjMineMarked
+
+data BoardState (n :: Nat) (n' :: Nat) = BoardState
+  { _tileGrid :: Grid n n' BoardTileState
+  , _numRevealed :: Finite (n * n' + 1)
+  , _numMarked :: Finite (n * n' + 1)
+  }
+
+
+class HasBoardEnv e (n :: Nat) (n' :: Nat) where
+  numMines :: e n n' -> Finite ((n * n') + 1)
+  getAdj :: e n n' -> GridCoord n n' -> [GridCoord n n']
 
 
 --TODO think if there's something more general here
@@ -83,7 +105,6 @@ tileVectorFromMines :: forall f n.
   -> VS.Vector n BoardTile
 tileVectorFromMines getAdj mineV = tileV
   where
-    --mineV = VS.replicate False VS.// (zip mineIndices $ repeat True)
     (StoreT (Identity tileV) _) = extend (tileFromMineStore getAdj)
                                   $ StoreT (Identity mineV) minBound
 
@@ -104,21 +125,62 @@ mineVectorFromIndexPairs numMines indexPairs =
       v' <- VS.freeze v
       return v'
 
-randomMineVector :: forall n m.
-  (KnownNat n, MonadInterleave m) =>
-  Finite (n + 1) -> m (VS.Vector n Bool)
-randomMineVector numMines =
-  mineVectorFromIndexPairs numMines
-  <$> (indexPairsChooseK numMines)
+startBoardStateFromTileGrid :: forall n n'.
+  (KnownNat n, KnownNat n') =>
+  Grid n n' BoardTile -> BoardState n n'
+startBoardStateFromTileGrid g =
+  BoardState { _tileGrid = startGridState
+             , _numRevealed = 0
+             , _numMarked = 0
+             }
+  where
+    makeStartTileState t =
+      BoardTileState { _tile = t
+                     , _isRevealed = False
+                     , _isMarked = False
+                     }
+    startGridState = makeStartTileState <$> g
 
-randomTileVector :: forall f n m.
-  (Functor f, Foldable f, KnownNat n, MonadInterleave m) =>
-  (Finite n -> f (Finite n))
-  -> Finite (n + 1)
-  -> m (VS.Vector n BoardTile)
-randomTileVector getAdj =
-  (tileVectorFromMines getAdj <$>) . randomMineVector
---TODO pretty print BoardTile and Board
+startBoardStateFromCoordPairs :: forall n n' e.
+  (KnownNat n, KnownNat n', HasBoardEnv e n n') =>
+  e n n'-> [(GridCoord n n', GridCoord n n')] -> BoardState n n'
+startBoardStateFromCoordPairs boardEnv =
+  startBoardStateFromTileGrid
+  . tileVectorFromIndexPairs'
+  . L.over (L.mapped . L.both) (L.view $ LI.from gridIndexCoord)
+  where
+    tileVectorFromIndexPairs' = tileVectorFromMines getAdj'
+                                . mineVectorFromIndexPairs'
+    getAdj' = LT.traverseOf gridIndexCoord . getAdj $ boardEnv
+    mineVectorFromIndexPairs' = mineVectorFromIndexPairs
+                                . numMines $ boardEnv
+
+--TODO use monadreader herer
+--make gameenv more modular like the font
+randomStartBoardState :: forall n n' e m.
+  (KnownNat n, KnownNat n', HasBoardEnv e n n', MonadInterleave m) =>
+  e n n'-> m (BoardState n n')
+randomStartBoardState boardEnv =
+  startBoardStateFromCoordPairs boardEnv
+  . L.over (L.mapped . L.both) (L.view gridIndexCoord)
+  <$> (indexPairsChooseK $ numMines boardEnv)
+
+
+dfsUnrevealedNonMines :: forall n n'. (KnownNat n, KnownNat n') =>
+  Grid n n' BoardTileState
+  -> (GridCoord n n' -> [GridCoord n n'])
+  -> GridCoord n n' -> [GridCoord n n']
+dfsUnrevealedNonMines gr f = unfoldDfs getAdjFiltered
+  where
+    tileStateAtCoord gr' = FR.index gr' . (L.view $ LI.from gridIndexCoord)
+    getAdjFiltered coord
+      | getAny . foldMap Any
+        $ fmap ($ tileStateAtCoord gr coord)
+        [_isRevealed
+        , _isMine . _tile
+        , (> 0) . _numAdjMines . _tile] = []
+      | otherwise = filter (not . _isMine . _tile . tileStateAtCoord gr)
+                    . f $ coord
 
 {-
    _________
