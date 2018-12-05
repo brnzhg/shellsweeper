@@ -15,6 +15,7 @@ Grid(..)
 , GridCoord(..)
 , GridIndex(..)
 , gridIndexCoord
+, gridCoordIndex
 , squareAdjacentCoords
 , gridToVecOfVec
 , gridToListOfList
@@ -59,6 +60,10 @@ gridIndexCoord = LI.iso getCoord combineProduct
                    . (`divMod` (fromIntegral . SP.fromSing $ nsing'))
                    . getFinite
 
+gridCoordIndex :: forall n n'. (KnownNat n, KnownNat n') =>
+  LI.Iso' (GridCoord n n') (GridIndex n n')
+gridCoordIndex = LI.from gridIndexCoord
+
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   GridCoord n n' -> [GridCoord n n']
@@ -76,9 +81,10 @@ gridToVecOfVec gr =
   VS.generate (\i ->
                   VS.generate (\j ->
                                   VS.index gr
-                                  $ L.view (LI.from gridIndexCoord) (i, j)))
+                                  $ L.view gridCoordIndex (i, j)))
 
-gridToListOfList :: forall n n' a. (KnownNat n, KnownNat n') => Grid n n' a -> [[a]]
+gridToListOfList :: forall n n' a. (KnownNat n, KnownNat n') =>
+  Grid n n' a -> [[a]]
 gridToListOfList = evalState
                    (replicateM (fromIntegral (maxBound :: Finite n)) m)
                    . toList

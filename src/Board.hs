@@ -8,6 +8,7 @@ ScopedTypeVariables
 , AllowAmbiguousTypes
 , MultiParamTypeClasses
 , TypeFamilies
+, TemplateHaskell
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -51,7 +52,8 @@ import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
 
 import ChooseFinite (indexPairsChooseK)
-import Grid (Grid(..), GridCoord(..), GridIndex(..), gridIndexCoord)
+import Grid (Grid(..), GridCoord(..), GridIndex(..)
+            , gridIndexCoord, gridCoordIndex)
 import Graph (unfoldDfs)
 
 data BoardTile = BoardTile
@@ -77,6 +79,11 @@ data BoardState (n :: Nat) (n' :: Nat) = BoardState
 class HasBoardEnv e (n :: Nat) (n' :: Nat) where
   numMines :: e n n' -> Finite ((n * n') + 1)
   getAdj :: e n n' -> GridCoord n n' -> [GridCoord n n']
+
+
+L.makeLenses ''BoardTile
+L.makeLenses ''BoardTileState
+L.makeLenses ''BoardState
 
 
 --TODO think if there's something more general here
@@ -147,7 +154,7 @@ startBoardStateFromCoordPairs :: forall n n' e.
 startBoardStateFromCoordPairs boardEnv =
   startBoardStateFromTileGrid
   . tileVectorFromIndexPairs'
-  . L.over (L.mapped . L.both) (L.view $ LI.from gridIndexCoord)
+  . L.over (L.mapped . L.both) (L.view gridCoordIndex)
   where
     tileVectorFromIndexPairs' = tileVectorFromMines getAdj'
                                 . mineVectorFromIndexPairs'
@@ -172,7 +179,7 @@ dfsUnrevealedNonMines :: forall n n'. (KnownNat n, KnownNat n') =>
   -> GridCoord n n' -> [GridCoord n n']
 dfsUnrevealedNonMines gr f = unfoldDfs getAdjFiltered
   where
-    tileStateAtCoord gr' = FR.index gr' . (L.view $ LI.from gridIndexCoord)
+    tileStateAtCoord gr' = FR.index gr' . (L.view gridCoordIndex)
     getAdjFiltered coord
       | getAny . foldMap Any
         $ fmap ($ tileStateAtCoord gr coord)
@@ -181,6 +188,16 @@ dfsUnrevealedNonMines gr f = unfoldDfs getAdjFiltered
         , (> 0) . _numAdjMines . _tile] = []
       | otherwise = filter (not . _isMine . _tile . tileStateAtCoord gr)
                     . f $ coord
+
+revealCoords :: forall n n'. (KnownNat n, KnownNat n') =>
+  Grid n n' BoardTileState -> [GridCoord n n'] -> Grid n n' BoardTileState
+revealCoords gr coords = gr VS.// (zip gridIndices tilesAtCoords')
+  where
+     tilesAtCoords' = L.set isRevealed True <$> tilesAtCoords
+     tilesAtCoords = FR.index gr <$> gridIndices
+     gridIndices = L.view gridCoordIndex <$> coords
+
+
 
 {-
    _________
