@@ -47,7 +47,9 @@ import GHC.TypeLits
 --import qualified Data.Singletons.Prelude as SP
 --import qualified Data.Singletons.TypeLits as STL
 
-import qualified Control.Lens as L
+--import Control.Lens ((.~))
+--import qualified Control.Lens as L
+import Control.Lens
 import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
 
@@ -81,9 +83,9 @@ class HasBoardEnv e (n :: Nat) (n' :: Nat) where
   getAdj :: e n n' -> GridCoord n n' -> [GridCoord n n']
 
 
-L.makeLenses ''BoardTile
-L.makeLenses ''BoardTileState
-L.makeLenses ''BoardState
+makeLenses ''BoardTile
+makeLenses ''BoardTileState
+makeLenses ''BoardState
 
 
 --TODO think if there's something more general here
@@ -189,6 +191,7 @@ dfsUnrevealedNonMines gr f = unfoldDfs getAdjFiltered
       | otherwise = filter (not . _isMine . _tile . tileStateAtCoord gr)
                     . f $ coord
 
+--TODO could use arrows for this
 revealCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTileState -> [GridCoord n n'] -> Grid n n' BoardTileState
 revealCoords gr coords = gr VS.// (zip gridIndices tilesAtCoords')
@@ -197,7 +200,16 @@ revealCoords gr coords = gr VS.// (zip gridIndices tilesAtCoords')
      tilesAtCoords = FR.index gr <$> gridIndices
      gridIndices = L.view gridCoordIndex <$> coords
 
-
+revealNonMinesFromCoord :: forall n n'. (KnownNat n, KnownNat n') =>
+  BoardState n n'
+  -> (GridCoord n n' -> [GridCoord n n'])
+  -> GridCoord n n'
+  -> BoardState n n'
+revealNonMinesFromCoord bs f coord = undefined
+  where
+    gr' = revealCoords tg . dfsUnrevealedNonMines tg f
+    tg = bs &. tileGrid
+--  bs 
 
 {-
    _________
