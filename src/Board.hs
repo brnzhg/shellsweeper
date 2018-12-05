@@ -156,7 +156,7 @@ startBoardStateFromCoordPairs :: forall n n' e.
 startBoardStateFromCoordPairs boardEnv =
   startBoardStateFromTileGrid
   . tileVectorFromIndexPairs'
-  . L.over (L.mapped . L.both) (L.view gridCoordIndex)
+  . over (mapped . both) (view gridCoordIndex)
   where
     tileVectorFromIndexPairs' = tileVectorFromMines getAdj'
                                 . mineVectorFromIndexPairs'
@@ -171,7 +171,7 @@ randomStartBoardState :: forall n n' e m.
   e n n'-> m (BoardState n n')
 randomStartBoardState boardEnv =
   startBoardStateFromCoordPairs boardEnv
-  . L.over (L.mapped . L.both) (L.view gridIndexCoord)
+  . over (mapped . both) (view gridIndexCoord)
   <$> (indexPairsChooseK $ numMines boardEnv)
 
 
@@ -181,7 +181,7 @@ dfsUnrevealedNonMines :: forall n n'. (KnownNat n, KnownNat n') =>
   -> GridCoord n n' -> [GridCoord n n']
 dfsUnrevealedNonMines gr f = unfoldDfs getAdjFiltered
   where
-    tileStateAtCoord gr' = FR.index gr' . (L.view gridCoordIndex)
+    tileStateAtCoord gr' = FR.index gr' . (view gridCoordIndex)
     getAdjFiltered coord
       | getAny . foldMap Any
         $ fmap ($ tileStateAtCoord gr coord)
@@ -196,9 +196,9 @@ revealCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTileState -> [GridCoord n n'] -> Grid n n' BoardTileState
 revealCoords gr coords = gr VS.// (zip gridIndices tilesAtCoords')
   where
-     tilesAtCoords' = L.set isRevealed True <$> tilesAtCoords
+     tilesAtCoords' = (isRevealed .~ True) <$> tilesAtCoords
      tilesAtCoords = FR.index gr <$> gridIndices
-     gridIndices = L.view gridCoordIndex <$> coords
+     gridIndices = (mapped %~ view gridCoordIndex) coords
 
 revealNonMinesFromCoord :: forall n n'. (KnownNat n, KnownNat n') =>
   BoardState n n'
@@ -208,8 +208,8 @@ revealNonMinesFromCoord :: forall n n'. (KnownNat n, KnownNat n') =>
 revealNonMinesFromCoord bs f coord = undefined
   where
     gr' = revealCoords tg . dfsUnrevealedNonMines tg f
-    tg = bs &. tileGrid
---  bs 
+    tg = bs ^. tileGrid
+--  bs
 
 {-
    _________
