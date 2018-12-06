@@ -1,2 +1,2 @@
 # shellsweeper
-* in progress, applying basic type-level, fgl, comonads, and brick
+* in progress, applying a little singleton/sized vectors, comonads/representable vectors, free monads (not yet), lenses, and brick
