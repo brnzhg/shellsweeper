@@ -89,6 +89,8 @@ squareAdjacentCoords (r, c) = [(r', c')
                         ..
                         packFiniteDefault maxBound (fromIntegral x + 1)]
 
+
+
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
   Grid n n' a -> VS.Vector n (VS.Vector n' a)
 gridToVecOfVec gr =

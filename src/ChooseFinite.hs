@@ -10,8 +10,9 @@ ScopedTypeVariables
 
 module ChooseFinite (
 RFinite(..)
-, indexPairsChooseK
-, indexPairsPermuteAll
+, indexSwapPairsChooseK
+, indexSwapPairsPermuteAll
+, vectorFromIndexSwapPairsChooseK
 ) where
 
 import System.Random (Random(..))
@@ -20,7 +21,13 @@ import GHC.List (take)
 import GHC.TypeLits
 
 import Data.Traversable
+import Control.Monad (forM_)
 import Control.Monad.Random (MonadInterleave, getRandomR, interleave)
+import Control.Monad.ST (ST, runST)
+
+import qualified Data.Vector.Mutable as VM
+import qualified Data.Vector.Sized as VS
+import qualified Data.Vector.Mutable.Sized as VMS
 
 
 newtype RFinite a = RFinite { getFin :: Finite a }
@@ -33,11 +40,11 @@ instance (KnownNat n) => Random (RFinite n) where
 
   random = randomR (minBound, maxBound)
 
-indexPairsChooseK :: forall n m.
+indexSwapPairsChooseK :: forall n m.
   (MonadInterleave m
   , KnownNat n) =>
   Finite (n + 1) -> m [(Finite n, Finite n)]
-indexPairsChooseK k = sequence
+indexSwapPairsChooseK k = sequence
   . take (fromIntegral k)
   . map indexToSwapPair
   $ enumFrom minBound
@@ -45,7 +52,28 @@ indexPairsChooseK k = sequence
     indexToSwapPair ri@(RFinite i) =
       ((,) i . getFin) <$> (getRandomR (ri, maxBound))
 
-indexPairsPermuteAll :: forall n m.
+indexSwapPairsPermuteAll :: forall n m.
   (MonadInterleave m
   , KnownNat n) => m [(Finite n, Finite n)]
-indexPairsPermuteAll = indexPairsChooseK (maxBound :: Finite (n + 1))
+indexSwapPairsPermuteAll =
+  indexSwapPairsChooseK (maxBound :: Finite (n + 1))
+
+
+vectorFromIndexSwapPairsChooseK :: forall n.
+  KnownNat n =>
+  Finite (n + 1)
+  -> [(Finite n, Finite n)]
+  -> VS.Vector n Bool
+vectorFromIndexSwapPairsChooseK k indexPairs =
+  runST st
+  where
+    st :: (forall s. ST s (VS.Vector n Bool))
+    st = do
+      v :: VMS.MVector n s Bool <- VMS.new
+      forM_ (take (fromIntegral k) $ enumFrom minBound)
+        (\i -> VMS.write v i True)
+      forM_ indexPairs $ uncurry $ VMS.swap v
+      v' <- VS.freeze v
+      return v'
+
+
