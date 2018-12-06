@@ -28,10 +28,12 @@ import Data.Foldable (toList)
 import Data.Finite (Finite, getFinite, modulo, combineProduct)
 import Data.Bifunctor (bimap)
 import Data.Functor.Rep as FR
+import Data.Functor.RepB as FRB
 import Data.Distributive as FD
 
 import Control.Monad (replicateM)
 import Control.Monad.State.Strict (State(..), get, state, evalState)
+import Control.Arrow ((&&&))
 
 import qualified Data.Vector as V
 import qualified Data.Vector.Sized as VS
@@ -77,6 +79,12 @@ instance (KnownNat n, KnownNat n') => FR.Representable (Grid n n') where
   type Rep (Grid n n') = GridCoord n n'
   index (Grid v) = VS.index v . L.view gridCoordIndex
   tabulate f = Grid $ tabulate (f . L.view gridIndexCoord)
+
+--TODO use wrap unwrap lenses for this grid to vec stuff
+instance (KnownNat n, KnownNat n') => FRB.RepresentableB (Grid n n') where
+  update (Grid v) = Grid
+                    . (v VS.//)
+                    . (L.mapped . L._1 L.%~ L.view (gridCoordIndex))
 
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
