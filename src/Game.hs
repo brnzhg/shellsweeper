@@ -29,7 +29,7 @@ import Control.Lens ((^.), (%~))
 import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
-  
+
 import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Sized as VS
 import qualified Data.Vector.Generic.Mutable.Base as VGM
@@ -38,10 +38,7 @@ import qualified Data.Vector.Generic.Mutable.Sized as VGMS
 import ChooseFinite (indexPairsChooseK)
 import Grid (Grid(..), GridCoord(..), GridIndex(..), gridIndexCoord)
 import Board (BoardTile(..)
-              , tileVectorFromMines
-              , mineVectorFromIndexPairs
-              , randomMineVector
-              , randomTileVector)
+              , mineVectorFromIndexPairs)
 
 data GameEndState = WinState | LoseState
 

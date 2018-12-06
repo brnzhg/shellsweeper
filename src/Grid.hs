@@ -6,6 +6,8 @@ ScopedTypeVariables
 , KindSignatures
 , UndecidableInstances
 , AllowAmbiguousTypes
+, GeneralizedNewtypeDeriving
+, TypeFamilies
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -25,6 +27,8 @@ import Data.List (mapAccumL, splitAt)
 import Data.Foldable (toList)
 import Data.Finite (Finite, getFinite, modulo, combineProduct)
 import Data.Bifunctor (bimap)
+import Data.Functor.Rep as FR
+import Data.Distributive as FD
 
 import Control.Monad (replicateM)
 import Control.Monad.State.Strict (State(..), get, state, evalState)
@@ -44,7 +48,9 @@ import qualified Control.Lens.Iso as LI
 import Data.Finite.Extras (packFiniteDefault)
 
 
-type Grid (n :: Nat) (n' :: Nat) = VS.Vector (n * n')
+newtype Grid (n :: Nat) (n' :: Nat) a =
+  Grid { getVector :: VS.Vector (n * n') a }
+  deriving (Functor, Applicative, Monad, Foldable)
 --  deriving (Functor, FR.Representable)
 
 type GridCoord (n :: Nat) (n' :: Nat) = (Finite n, Finite n')
@@ -64,6 +70,14 @@ gridCoordIndex :: forall n n'. (KnownNat n, KnownNat n') =>
   LI.Iso' (GridCoord n n') (GridIndex n n')
 gridCoordIndex = LI.from gridIndexCoord
 
+instance (KnownNat n, KnownNat n') => FD.Distributive (Grid n n') where
+  distribute = FR.distributeRep
+
+instance (KnownNat n, KnownNat n') => FR.Representable (Grid n n') where
+  type Rep (Grid n n') = GridCoord n n'
+  index (Grid v) = VS.index v . L.view gridCoordIndex
+  tabulate f = Grid $ tabulate (f . L.view gridIndexCoord)
+
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   GridCoord n n' -> [GridCoord n n']
@@ -80,8 +94,7 @@ gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
 gridToVecOfVec gr =
   VS.generate (\i ->
                   VS.generate (\j ->
-                                  VS.index gr
-                                  $ L.view gridCoordIndex (i, j)))
+                                  index gr (i, j)))
 
 gridToListOfList :: forall n n' a. (KnownNat n, KnownNat n') =>
   Grid n n' a -> [[a]]

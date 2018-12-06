@@ -9,13 +9,13 @@ ScopedTypeVariables
 , MultiParamTypeClasses
 , TypeFamilies
 , TemplateHaskell
+, FlexibleContexts
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 module Board (
   BoardTile(..)
-  , tileVectorFromMines
   , mineVectorFromIndexPairs
   ) where
 
@@ -26,6 +26,7 @@ import Data.Functor.Identity (Identity(..))
 import Data.Functor.Rep as FR
 import Data.Monoid (Any(..))
 import Data.Traversable
+import Data.Hashable(Hashable(..))
 import Control.Monad (forM_)
 import Control.Monad.ST (ST, runST)
 import Control.Monad.Random (MonadInterleave, interleave)
@@ -107,15 +108,16 @@ tileFromMineStore getAdj mineStore =
                       . experiment getAdj
     (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
 
-tileVectorFromMines :: forall f n.
-  (Functor f, Foldable f, KnownNat n) =>
-  (Finite n -> f (Finite n))
-  -> VS.Vector n Bool
-  -> VS.Vector n BoardTile
-tileVectorFromMines getAdj mineV = tileV
+tileRepresentableFromMines :: forall f g.
+  (Functor f, Foldable f, FR.Representable g) =>
+  (FR.Rep g -> f (FR.Rep g))
+  -> g Bool
+  -> g BoardTile
+tileRepresentableFromMines getAdj mineRepbl = tileRepbl
   where
-    (StoreT (Identity tileV) _) = extend (tileFromMineStore getAdj)
-                                  $ StoreT (Identity mineV) minBound
+    (StoreT (Identity tileRepbl) _) =
+      extend (tileFromMineStore getAdj)
+      $ StoreT (Identity mineRepbl) undefined
 
 mineVectorFromIndexPairs :: forall n.
   KnownNat n =>
@@ -150,19 +152,18 @@ startBoardStateFromTileGrid g =
                      }
     startGridState = makeStartTileState <$> g
 
+--TODO in future, abstract board to representable functor
 startBoardStateFromCoordPairs :: forall n n' e.
   (KnownNat n, KnownNat n', HasBoardEnv e n n') =>
   e n n'-> [(GridCoord n n', GridCoord n n')] -> BoardState n n'
 startBoardStateFromCoordPairs boardEnv =
   startBoardStateFromTileGrid
-  . tileVectorFromIndexPairs'
+  . Grid
+  . tileRepresentableFromMines getAdj'
+  . mineVectorFromIndexPairs (numMines boardEnv)
   . over (mapped . both) (view gridCoordIndex)
   where
-    tileVectorFromIndexPairs' = tileVectorFromMines getAdj'
-                                . mineVectorFromIndexPairs'
     getAdj' = LT.traverseOf gridIndexCoord . getAdj $ boardEnv
-    mineVectorFromIndexPairs' = mineVectorFromIndexPairs
-                                . numMines $ boardEnv
 
 --TODO use monadreader herer
 --make gameenv more modular like the font
@@ -175,29 +176,31 @@ randomStartBoardState boardEnv =
   <$> (indexPairsChooseK $ numMines boardEnv)
 
 
-dfsUnrevealedNonMines :: forall n n'. (KnownNat n, KnownNat n') =>
-  Grid n n' BoardTileState
-  -> (GridCoord n n' -> [GridCoord n n'])
-  -> GridCoord n n' -> [GridCoord n n']
-dfsUnrevealedNonMines gr f = unfoldDfs getAdjFiltered
+dfsUnrevealedNonMines :: forall f.
+  (Representable f
+  , Eq (FR.Rep f)
+  , Hashable (FR.Rep f)) =>
+  f BoardTileState
+  -> (FR.Rep f -> [FR.Rep f])
+  -> FR.Rep f -> [FR.Rep f]
+dfsUnrevealedNonMines g adj = unfoldDfs getAdjFiltered
   where
-    tileStateAtCoord gr' = FR.index gr' . (view gridCoordIndex)
-    getAdjFiltered coord
+    getAdjFiltered i
       | getAny . foldMap Any
-        $ fmap ($ tileStateAtCoord gr coord)
-        [_isRevealed
-        , _isMine . _tile
-        , (> 0) . _numAdjMines . _tile] = []
-      | otherwise = filter (not . _isMine . _tile . tileStateAtCoord gr)
-                    . f $ coord
+        $ fmap ($ g `FR.index` i)
+        [ (^.isRevealed)
+        , (^.tile.isMine)
+        , (> 0) . (^.tile.numAdjMines)] = []
+      | otherwise =
+        filter (not . (^.tile.isMine) . FR.index g) . adj $ i
 
 --TODO could use arrows for this
 revealCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTileState -> [GridCoord n n'] -> Grid n n' BoardTileState
-revealCoords gr coords = gr VS.// (zip gridIndices tilesAtCoords')
+revealCoords gr coords = Grid
+  $ getVector gr VS.// (zip gridIndices tilesAtCoords')
   where
-     tilesAtCoords' = (isRevealed .~ True) <$> tilesAtCoords
-     tilesAtCoords = FR.index gr <$> gridIndices
+     tilesAtCoords' = (isRevealed .~ True) . FR.index gr <$> coords
      gridIndices = (mapped %~ view gridCoordIndex) coords
 
 revealNonMinesFromCoord :: forall n n'. (KnownNat n, KnownNat n') =>
