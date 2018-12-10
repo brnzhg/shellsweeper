@@ -7,6 +7,7 @@ ScopedTypeVariables
 , UndecidableInstances
 , AllowAmbiguousTypes
 , MultiParamTypeClasses
+, FlexibleContexts
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -21,8 +22,9 @@ import Data.Bifunctor (bimap)
 
 import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.Random (MonadInterleave)
-import Control.Monad.Request
-
+import Control.Monad.Request.Lazy (RequestT(..))
+import Control.Monad.Request.Class (MonadRequest(..))
+  
 import Data.Finite
 import GHC.TypeLits
 
@@ -42,7 +44,7 @@ data GameRequest i mrk =
   | MarkTileRequest i mrk
   | ResetRequest
 
---class Monad m => MonadGame m where
+class MonadRequest (GameRequest i mrk) (Maybe GameEndState) m => MonadGame i mrk m
 
 
 --class HasTileState s where
