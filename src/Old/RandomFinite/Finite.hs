@@ -1,4 +1,4 @@
-module RandomFinite.Finite where
+module Old.RandomFinite.Finite where
 
 import System.Random (Random(..))
 import Data.Finite

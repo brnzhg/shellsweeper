@@ -21,26 +21,33 @@ import Data.Bifunctor (bimap)
 
 import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.Random (MonadInterleave)
+import Control.Monad.Request
 
 import Data.Finite
 import GHC.TypeLits
 
-import Control.Lens ((^.), (%~))
-import qualified Control.Lens as L
+import Control.Lens
 import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
 
-import qualified Data.Vector.Mutable as VM
-import qualified Data.Vector.Sized as VS
-import qualified Data.Vector.Generic.Mutable.Base as VGM
-import qualified Data.Vector.Generic.Mutable.Sized as VGMS
 
-import ChooseFinite (indexPairsChooseK)
-import Grid (Grid(..), GridCoord(..), GridIndex(..), gridIndexCoord)
-import Board (BoardTile(..)
-              , mineVectorFromIndexPairs)
+--
+--import Grid (Grid(..), GridCoord(..), GridIndex(..))
+import Board ()
 
-data GameEndState = WinState | LoseState
+data GameEndState = WinState | LoseState | DnfState
+
+data GameRequest i mrk =
+  RevealTileRequest i
+  | MarkTileRequest i mrk
+  | ResetRequest
+
+--class Monad m => MonadGame m where
+
+
+--class HasTileState s where
+--
+
 
 {-
 data GameState (n :: Nat) (n' :: Nat) = GameState
@@ -60,6 +67,9 @@ data GameEnv (n :: Nat) (n' :: Nat) = GameEnv
 --generate start
 --reveal tile
 --mark tile
+
+
+
 
 --TODO doesn't require anythign from current game env
 --might later, better to split env by interface

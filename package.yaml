@@ -42,6 +42,8 @@ dependencies:
 - vector-sized
 - hashable
 - hashtables
+- transformers
+- free
 
 library:
   source-dirs: src

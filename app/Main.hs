@@ -55,10 +55,11 @@ import Control.Monad.Random (getRandomR, getRandom, MonadSplit, MonadRandom, Ran
 
 import GHC.TypeLits
 
+
 import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
 
-import RandomFinite.Vector (shuffleFirstK)
+import Old.RandomFinite.Vector (shuffleFirstK)
 
 
 type Grid (n :: Nat) (m :: Nat) =
@@ -258,4 +259,3 @@ main = do
         }}
   runReaderT go gs
   putStrLn "FINISHED!"
-

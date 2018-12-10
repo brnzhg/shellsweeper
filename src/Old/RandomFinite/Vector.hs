@@ -6,9 +6,8 @@ ScopedTypeVariables
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
-
 -- random operations on sized vectors
-module RandomFinite.Vector
+module Old.RandomFinite.Vector
   ( randSwapRight
   , shuffleFirstK
   )
@@ -24,7 +23,7 @@ import Data.Vector.Generic.Mutable.Sized as VS
 
 import GHC.TypeLits
 
-import RandomFinite.Finite
+import Old.RandomFinite.Finite
 
 
 randSwapRight :: forall v n m m' a.
