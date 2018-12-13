@@ -10,6 +10,8 @@ ScopedTypeVariables
 , TypeFamilies
 , TemplateHaskell
 , FlexibleContexts
+, FlexibleInstances
+, FunctionalDependencies
 , DuplicateRecordFields
 #-}
 
@@ -33,7 +35,8 @@ import Data.Hashable(Hashable(..))
 --import Control.Monad.ST (ST, runST)
 --import Control.Monad.Random (MonadInterleave, interleave)
 --import Control.Monad.Primitive (PrimMonad, PrimState)
-import Control.Monad.Reader (Reader(..))
+import Control.Monad.Reader (ReaderT(..), MonadReader(..))
+import Control.Monad.State (MonadState(..))
 import Control.Comonad (Comonad(..))
 import Control.Comonad.Representable.Store
   (Store, StoreT(..), ComonadStore, store, experiment, runStore)
@@ -41,26 +44,15 @@ import Control.Arrow ((&&&))
 
 import Numeric.Natural
 
---import qualified Data.Vector as V
---import qualified Data.Vector.Mutable as VM
---import qualified Data.Vector.Sized as VS
---import qualified Data.Vector.Mutable.Sized as VMS
-
 import GHC.TypeLits
---import qualified Data.Singletons.Prelude as SP
---import qualified Data.Singletons.TypeLits as STL
 
---import Control.Lens ((.~))
---import qualified Control.Lens as L
 import Control.Lens
 import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
 
---import ChooseFinite (indexSwapPairsChooseK)
---import Grid (Grid(..), GridCoord(..), GridIndex(..)
---            , gridIndexCoord, gridCoordIndex)
 import qualified Data.Functor.RepB as FRB
 import Graph (unfoldDfs)
+import Game(GameEndState(..), GameRequest(..), MonadGame(..), MonadBoardGen(..), MonadBoard(..))
 
 data SingleMineTile = SingleMineTile
   { _isMine :: Bool
@@ -78,17 +70,16 @@ data TileState tl mrk = TileState
   , _mark :: mrk
   }
 
-type BoardTileState f tl mrk = f (TileState tl mrk)
---this could be thing in State Monad
---add numAdjMineMarked
-
-{-
-data BoardState f = BoardState
-  { _tileStates :: f BoardTileState
+data RepBoardState tl mrk f = RepBoardState
+  { _tileStates :: f (TileState tl mrk)
   , _numRevealed :: Natural
-  , _numMarked :: Natural
+  , _marks :: mrk
   }
--}
+
+--makeLenses ''HasTile
+makeLenses ''TileState
+makeLenses ''RepBoardState
+
 
 class HasTileMineCtxt env where
   isMine :: env -> Bool
@@ -108,23 +99,30 @@ class (FR.Representable f) => HasBoardEnv e f where
   getAdj :: e f -> FR.Rep f -> [FR.Rep f]
 -}
 
---makeLenses ''HasTile
-makeLenses ''TileState
---makeLenses ''BoardState
-
---TODO this doesn't make sense, shouldnt be the interpreter these are set in stone pretty much
---think what needs to be in the env, monad interpreter should be command and response
--- resetBoard . f $ generateBoard = generateBoard
-class (FR.Representable f) => HasBoardState f tl mrk where
-  generateBoard :: f tl -> BoardTileState f tl mrk
-  resetBoard :: BoardTileState f tl mrk -> BoardTileState f tl mrk -- useless?
-  revealTile :: FR.Rep f -> BoardTileState f tl mrk -> (TileState tl mrk, BoardTileState f tl mrk)
-  changeMark :: FR.Rep f -> BoardTileState f tl mrk -> (TileState tl mrk, BoardTileState f tl mrk)
+class FR.Representable f => HasRepresentableGetAdj f e | e -> f where
+  getAdj :: e -> FR.Rep f -> [FR.Rep f]
 
 
---class Monad m => MonadGame br i mrk m | br -> i where
---generateBoard :: m 
+instance (FRB.RepresentableB f
+         , HasRepresentableGetAdj f e
+         , Monoid mrk
+         , MonadReader e m
+         , HasTileMineCtxt tl
+         , MonadState (RepBoardState tl mrk f) m
+         , Eq k
+         , Hashable k
+         , k ~ (FR.Rep f)) =>
+  MonadBoard k mrk m where
+  revealBoardTile k = do
+    rbs <- get
+    if isMine . view tile $ (`FR.index` k) $ rbs^.tileStates
+      then return False
+      else (do
+               env <- ask
+               put $ revealNonMinesFromIndex rbs (getAdj env) k
+               return True)
 
+  markBoardTile = undefined
 
 
 --TODO think if there's something more general here
@@ -199,18 +197,20 @@ revealIndices :: forall f tl mrk. FRB.RepresentableB f =>
   f (TileState tl mrk) -> [FR.Rep f] -> f (TileState tl mrk)
 revealIndices = flip FRB.updateOver (isRevealed .~ True)
 
-{-
-revealNonMinesFromIndex :: forall f.
-  (FRB.RepresentableB f, Eq (FR.Rep f), Hashable (FR.Rep f)) =>
-  BoardState f -> (FR.Rep f -> [FR.Rep f]) -> FR.Rep f -> BoardState f
+revealNonMinesFromIndex :: forall f tl mrk.
+  (FRB.RepresentableB f
+  , Eq (FR.Rep f)
+  , Hashable (FR.Rep f)
+  , HasTileMineCtxt tl) =>
+  RepBoardState tl mrk f
+  -> (FR.Rep f -> [FR.Rep f]) -> FR.Rep f -> RepBoardState tl mrk f
 revealNonMinesFromIndex bs adj start = bs
   & tileStates %~ flip revealIndices indicesToReveal
   & numRevealed +~ revealCount
   where
     (indicesToReveal, revealCount) =
       id &&& (fromIntegral . length)
-      $ dfsUnrevealedNonMines (bs ^. tileStates) adj start
--}
+      $ dfsUnrevealedNonMines (bs^.tileStates) adj start
 
 
 
