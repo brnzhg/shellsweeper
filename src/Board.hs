@@ -23,6 +23,7 @@ module Board (
   ) where
 
 import Data.Monoid (Sum(..))
+import Data.Group (Group(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
@@ -81,17 +82,20 @@ makeLenses ''TileState
 makeLenses ''RepBoardState
 
 
-class HasTileMineCtxt env where
+class HasTile env where
   isMine :: env -> Bool
   isMineAdj :: env -> Bool
+  numMines :: env -> Natural
 
-instance HasTileMineCtxt SingleMineTile where
+instance HasTile SingleMineTile where
   isMine = _isMine
   isMineAdj = (> 0) . (_numAdjMines :: SingleMineTile -> Natural)
+  numMines t = if _isMine t then 1 else 0
 
-instance HasTileMineCtxt MultiMineTile where
+instance HasTile MultiMineTile where
   isMine = (> 0) . _numMines
   isMineAdj = (> 0) . (_numAdjMines :: MultiMineTile -> Natural)
+  numMines = _numMines
 
 {-
 class (FR.Representable f) => HasBoardEnv e f where
@@ -99,18 +103,19 @@ class (FR.Representable f) => HasBoardEnv e f where
   getAdj :: e f -> FR.Rep f -> [FR.Rep f]
 -}
 
-class FR.Representable f => HasRepresentableGetAdj f e | e -> f where
+class (Eq k, Hashable k) => RepBoardKey k
+
+class FR.Representable f => HasRepGetAdj f e | e -> f where
   getAdj :: e -> FR.Rep f -> [FR.Rep f]
 
+class (HasTile tl, Group mrk, MonadState (RepBoardState tl mrk f) m) =>
+      HasRepBoardState tl mrk f m
 
 instance (FRB.RepresentableB f
-         , HasRepresentableGetAdj f e
-         , Monoid mrk
+         , HasRepGetAdj f e
          , MonadReader e m
-         , HasTileMineCtxt tl
-         , MonadState (RepBoardState tl mrk f) m
-         , Eq k
-         , Hashable k
+         , HasRepBoardState tl mrk f m
+         , RepBoardKey k
          , k ~ (FR.Rep f)) =>
   MonadBoard k mrk m where
   revealBoardTile k = do
@@ -122,7 +127,7 @@ instance (FRB.RepresentableB f
                put $ revealNonMinesFromIndex rbs (getAdj env) k
                return True)
 
-  markBoardTile = undefined
+  markBoardTile k mrk = return ()
 
 
 --TODO think if there's something more general here
@@ -153,7 +158,7 @@ tileRepresentableFromMines getAdj mineRepbl = tileRepbl
       $ StoreT (Identity mineRepbl) undefined
 
 startBoardStateFromTileRepresentable :: forall f tl mrk.
-  (FR.Representable f, HasTileMineCtxt tl, Monoid mrk) =>
+  (FR.Representable f, HasTile tl, Group mrk) =>
   f tl -> f (TileState tl mrk)
 startBoardStateFromTileRepresentable =
   fmap makeStartTileState
@@ -176,9 +181,8 @@ startBoardStateFromMineRepresentable =
 --this way we can get rid of the minecontxt typeclass
 dfsUnrevealedNonMines :: forall f tl mrk.
   (Representable f
-  , Eq (FR.Rep f)
-  , Hashable (FR.Rep f)
-  , HasTileMineCtxt tl) =>
+  , RepBoardKey (FR.Rep f)
+  , HasTile tl) =>
   f (TileState tl mrk)
   -> (FR.Rep f -> [FR.Rep f])
   -> FR.Rep f -> [FR.Rep f]
@@ -199,9 +203,8 @@ revealIndices = flip FRB.updateOver (isRevealed .~ True)
 
 revealNonMinesFromIndex :: forall f tl mrk.
   (FRB.RepresentableB f
-  , Eq (FR.Rep f)
-  , Hashable (FR.Rep f)
-  , HasTileMineCtxt tl) =>
+  , RepBoardKey (FR.Rep f)
+  , HasTile tl) =>
   RepBoardState tl mrk f
   -> (FR.Rep f -> [FR.Rep f]) -> FR.Rep f -> RepBoardState tl mrk f
 revealNonMinesFromIndex bs adj start = bs
@@ -209,10 +212,11 @@ revealNonMinesFromIndex bs adj start = bs
   & numRevealed +~ revealCount
   where
     (indicesToReveal, revealCount) =
-      id &&& (fromIntegral . length)
-      $ dfsUnrevealedNonMines (bs^.tileStates) adj start
-
-
+      id &&& (getSum
+              . foldMap Sum
+              . map (numMines . view tile . FR.index ts))
+      $ dfsUnrevealedNonMines ts adj start
+    ts = bs^.tileStates
 
 
 {-
@@ -229,7 +233,6 @@ startBoardStateFromCoordPairs boardEnv =
     getAdj' = LT.traverseOf gridIndexCoord . getAdj $ boardEnv
 -}
 
---TODO goto grid or choose
 --make gameenv more modular like the font
 {-
 randomStartBoardState :: forall n n' e m.
@@ -259,8 +262,7 @@ revealNonMinesFromCoord bs f coord = undefined
     gr' = revealCoords tg . dfsUnrevealedNonMines tg f
     tg = bs ^. tileGrid
 -}
---  bs
---TODO in the env create the board!!
+
 {-
    _________
   /        /|

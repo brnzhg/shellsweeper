@@ -44,6 +44,7 @@ dependencies:
 - hashtables
 - transformers
 - free
+- groups
 
 library:
   source-dirs: src

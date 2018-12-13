@@ -41,8 +41,6 @@ import Control.Monad.Request.Class (MonadRequest(..))
 --import qualified Control.Lens.Traversal as LT
 
 
---
---import Grid (Grid(..), GridCoord(..), GridIndex(..))
 
 data GameEndState = WinState | LoseState
 
@@ -56,6 +54,10 @@ class MonadRequest (GameRequest i mrk) (Maybe GameEndState) m => MonadGame i mrk
 class Monad m => MonadBoardGen g m | m -> g where
   genBoard :: g -> m ()
 
+class Monad m => MonadBoard k mrk m | m -> k where
+  revealBoardTile :: k -> m Bool
+  markBoardTile :: k -> (mrk -> mrk) -> m ()
+
 
 {-
 class MonadBoard m where
@@ -64,11 +66,6 @@ class MonadBoard m where
   revealBoardTile :: (BoardKey m) -> m Bool
   markeBoardTile :: (BoardKey m) -> (BoardMark m) -> m ()
 -}
-
-class Monad m => MonadBoard k mrk m | m -> k where
-  revealBoardTile :: k -> m Bool
-  markBoardTile :: k -> (mrk -> mrk) -> m ()
-
 --render board MonadGame -> IO
 
 {-
