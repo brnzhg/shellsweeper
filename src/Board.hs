@@ -23,7 +23,7 @@ module Board (
   ) where
 
 import Data.Monoid (Sum(..))
-import Data.Group (Group(..))
+import Data.Group (Group(..), Abelian(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
@@ -37,7 +37,7 @@ import Data.Hashable(Hashable(..))
 --import Control.Monad.Random (MonadInterleave, interleave)
 --import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Monad.Reader (ReaderT(..), MonadReader(..))
-import Control.Monad.State (MonadState(..))
+import Control.Monad.State (MonadState(..), modify)
 import Control.Comonad (Comonad(..))
 import Control.Comonad.Representable.Store
   (Store, StoreT(..), ComonadStore, store, experiment, runStore)
@@ -53,7 +53,7 @@ import qualified Control.Lens.Traversal as LT
 
 import qualified Data.Functor.RepB as FRB
 import Graph (unfoldDfs)
-import Game(GameEndState(..), GameRequest(..), MonadGame(..), MonadBoardGen(..), MonadBoard(..))
+import Game(MonadBoardGen(..), MonadBoard(..))
 
 data SingleMineTile = SingleMineTile
   { _isMine :: Bool
@@ -102,18 +102,14 @@ instance HasTile tl => HasTile (TileState tl mrk) where
   isMineAdj = isMineAdj . view tile
   numMines = numMines . view tile
 
-{-
-class (FR.Representable f) => HasBoardEnv e f where
-  numMines :: e f -> Natural
-  getAdj :: e f -> FR.Rep f -> [FR.Rep f]
--}
 
 class (Eq k, Hashable k) => RepBoardKey k
 
 class FR.Representable f => HasRepGetAdj f e | e -> f where
   getAdj :: e -> FR.Rep f -> [FR.Rep f]
 
-class (HasTile tl, Group mrk, MonadState (RepBoardState tl mrk f) m) =>
+--TODO what to do for thread state?
+class (HasTile tl, Abelian mrk, MonadState (RepBoardState tl mrk f) m) =>
       HasRepBoardState tl mrk f m
 
 instance (FRB.RepresentableB f
@@ -132,14 +128,10 @@ instance (FRB.RepresentableB f
                put $ revealNonMinesFromIndex rbs (getAdj env) k
                return True)
 
-  markBoardTile k mrk = return ()
+  markBoardTile changeMark k = modify $ (\s -> markIndex s changeMark k)
 
 
---TODO think if there's something more general here
---foldExperiment :: (Functor f, Foldable f, Monoid b, ComonadStore s w) =>
---  (s -> f s) -> (a -> b) -> w a -> b
---foldExperiment f g = foldMap g . experiment f
-
+--TODO fix this to be good over both tile types
 tileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
   (s -> f s) -> w Bool -> SingleMineTile
 tileFromMineStore getAdj mineStore =
@@ -173,7 +165,6 @@ startBoardStateFromTileRepresentable =
                 , _isRevealed = False
                 , _mark = mempty
                 }
-    --startTileStates = makeStartTileState <$> g
 
 {-
 startBoardStateFromMineRepresentable :: forall f e.
@@ -188,7 +179,7 @@ dfsUnrevealedNonMines :: forall f tl mrk.
   (Representable f
   , RepBoardKey (FR.Rep f)
   , HasTile tl) =>
-  f tl
+  f (TileState tl mrk)
   -> (FR.Rep f -> [FR.Rep f])
   -> FR.Rep f -> [FR.Rep f]
 dfsUnrevealedNonMines g adj = unfoldDfs getAdjFiltered
@@ -223,6 +214,20 @@ revealNonMinesFromIndex bs adj start = bs
       $ dfsUnrevealedNonMines ts adj start
     ts = bs^.tileStates
 
+
+markIndex :: forall f tl mrk.
+  (FRB.RepresentableB f
+  , RepBoardKey (FR.Rep f)
+  , HasTile tl
+  , Abelian mrk) =>
+  RepBoardState tl mrk f -> (mrk -> mrk) -> FR.Rep f -> RepBoardState tl mrk f
+markIndex bs changeMark i = bs
+  & tileStates %~ flip FRB.update [(i, ts & mark.~newMark)]
+  & marks %~ (<> invert currentMark <> newMark)
+  where
+    newMark = changeMark currentMark
+    currentMark = view mark ts
+    ts = FR.index (bs^.tileStates) i
 
 {-
 startBoardStateFromCoordPairs :: forall n n' e.

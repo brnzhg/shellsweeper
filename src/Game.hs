@@ -17,10 +17,7 @@ ScopedTypeVariables
 --or gamestate? all nonui aspects of game state transformations
 --where cursor is doesnt matter for example
 module Game (
-GameEndState(..)
-, GameRequest(..)
-, MonadGame(..)
-, MonadBoardGen(..)
+MonadBoardGen(..)
 , MonadBoard(..)) where
 
 
@@ -40,23 +37,22 @@ import Control.Monad.Request.Class (MonadRequest(..))
 --import qualified Control.Lens.Iso as LI
 --import qualified Control.Lens.Traversal as LT
 
-
-
+{-
 data GameEndState = WinState | LoseState
 
 data GameRequest i mrk =
   RevealTileRequest i
   | MarkTileRequest i mrk
   | ResetRequest
-
 class MonadRequest (GameRequest i mrk) (Maybe GameEndState) m => MonadGame i mrk m
+-}
 
 class Monad m => MonadBoardGen g m | m -> g where
   genBoard :: g -> m ()
 
 class Monad m => MonadBoard k mrk m | m -> k where
   revealBoardTile :: k -> m Bool
-  markBoardTile :: k -> (mrk -> mrk) -> m ()
+  markBoardTile :: (mrk -> mrk) -> k -> m ()
 
 
 {-
