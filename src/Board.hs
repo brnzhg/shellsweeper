@@ -97,6 +97,11 @@ instance HasTile MultiMineTile where
   isMineAdj = (> 0) . (_numAdjMines :: MultiMineTile -> Natural)
   numMines = _numMines
 
+instance HasTile tl => HasTile (TileState tl mrk) where
+  isMine = isMine . view tile
+  isMineAdj = isMineAdj . view tile
+  numMines = numMines . view tile
+
 {-
 class (FR.Representable f) => HasBoardEnv e f where
   numMines :: e f -> Natural
@@ -183,7 +188,7 @@ dfsUnrevealedNonMines :: forall f tl mrk.
   (Representable f
   , RepBoardKey (FR.Rep f)
   , HasTile tl) =>
-  f (TileState tl mrk)
+  f tl
   -> (FR.Rep f -> [FR.Rep f])
   -> FR.Rep f -> [FR.Rep f]
 dfsUnrevealedNonMines g adj = unfoldDfs getAdjFiltered
