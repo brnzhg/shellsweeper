@@ -44,10 +44,12 @@ import qualified Data.Singletons.TypeLits as STL
 
 import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
---import qualified Control.Lens.Traversal as LT
+import qualified Control.Lens.Traversal as LT
 
---import ChooseFinite (chooseAndSwapIndicesToK, indexPermutation)
 import Data.Finite.Extras (packFiniteDefault)
+import ChooseFinite (indexSwapPairsChooseK
+                    , vectorFromIndexSwapPairsChooseK)
+import Board (SingleMineTile(..), MultiMineTile(..))
 
 
 newtype Grid (n :: Nat) (n' :: Nat) a =

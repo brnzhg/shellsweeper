@@ -17,8 +17,7 @@ ScopedTypeVariables
 --or gamestate? all nonui aspects of game state transformations
 --where cursor is doesnt matter for example
 module Game (
-MonadBoardGen(..)
-, MonadBoard(..)) where
+MonadBoard(..)) where
 
 
 import Data.Foldable --
@@ -27,11 +26,8 @@ import Data.Traversable --
 
 --import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 --import Control.Monad.Random (MonadInterleave)
-import Control.Monad.Request.Lazy (RequestT(..))
-import Control.Monad.Request.Class (MonadRequest(..))
-
---import Data.Finite
---import GHC.TypeLits
+--import Control.Monad.Request.Lazy (RequestT(..))
+--import Control.Monad.Request.Class (MonadRequest(..))
 
 --import Control.Lens
 --import qualified Control.Lens.Iso as LI
@@ -47,11 +43,8 @@ data GameRequest i mrk =
 class MonadRequest (GameRequest i mrk) (Maybe GameEndState) m => MonadGame i mrk m
 -}
 
-class Monad m => MonadBoardGen g m | m -> g where
-  genBoard :: g -> m ()
-
 class Monad m => MonadBoard k mrk m | m -> k where
-  revealBoardTile :: k -> m Bool
+  revealBoardTile :: k -> m (Maybe Bool)
   markBoardTile :: (mrk -> mrk) -> k -> m ()
 
 
