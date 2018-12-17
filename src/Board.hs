@@ -20,9 +20,14 @@ ScopedTypeVariables
 module Board (
   SingleMineTile(..)
   , MultiMineTile(..)
+  , RepBoardKey(..)
+  , HasRepGetAdj(..)
+  , HasBoardNumSpaces(..)
+  , HasRepBoardEnv(..)
   , TileState(..)
   , RepBoardState(..)
   , HasTile(..)
+  , HasMark(..)
   , startSingleMineRepBoardStateFromMines
   ) where
 
@@ -111,10 +116,10 @@ class (Eq k, Hashable k) => RepBoardKey k
 class FR.Representable f => HasRepGetAdj f e | e -> f where
   getAdj :: e -> FR.Rep f -> [FR.Rep f]
 
-class HasBoardNumMines e where
+class HasBoardNumSpaces e where
   boardNumSpaces :: e -> Natural
 
-class (HasRepGetAdj f e, HasBoardNumMines e) => HasRepBoardEnv f e
+class (HasRepGetAdj f e, HasBoardNumSpaces e) => HasRepBoardEnv f e
 
 --TODO what to do for thread state?
 class (HasTile tl, HasMark mrk, MonadState (RepBoardState tl mrk f) m) =>
@@ -226,13 +231,11 @@ revealNonMinesFromIndex :: forall f tl mrk.
   -> (FR.Rep f -> [FR.Rep f]) -> FR.Rep f -> RepBoardState tl mrk f
 revealNonMinesFromIndex bs adj start = bs
   & tileStates %~ flip revealIndices indicesToReveal
-  & numRevealed +~ revealCount
+  & numRevealed +~ (fromIntegral $ length indicesToReveal)
   & markSum %~ (<> invert revealMarkSum) --all marks get cleared if revealed
   where
-    revealCount = getSum . foldMap Sum . map (numMines . view tile)
-                  $ tileStatesToReveal
-    revealMarkSum = mconcat . map (view mark) $ tileStatesToReveal
-    tileStatesToReveal = map (FR.index ts) indicesToReveal
+    revealMarkSum = mconcat . map (view mark . FR.index ts)
+                    $ indicesToReveal
     indicesToReveal = filter (not . marksMine . view mark . FR.index ts)
                       $ dfsUnrevealedNonMines ts adj start
     ts = bs^.tileStates
@@ -305,21 +308,6 @@ revealNonMinesFromCoord bs f coord = undefined
 -}
 
 {-
-   _________
-  /        /|
- /________/ |
- |        | |
- |        | |
- |        | /
- |________|/
-
- / \ / \ /
-| 1 | * |
- \ / \ / \
-  | 3 | * |
- / \ / \ /
-| * | 1 |
-
 -x---x---x---
 /2\*/2\1/1\1/
 ---x---x---x-
