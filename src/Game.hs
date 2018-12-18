@@ -44,7 +44,7 @@ class MonadRequest (GameRequest i mrk) (Maybe GameEndState) m => MonadGame i mrk
 -}
 
 class Monad m => MonadBoard k mrk m | m -> k where
-  revealBoardTile :: k -> m (Maybe Bool)
+  revealBoardTile :: k -> m (Maybe Bool, [k])
   markBoardTile :: (mrk -> mrk) -> k -> m ()
 
 
@@ -56,28 +56,6 @@ class MonadBoard m where
   markeBoardTile :: (BoardKey m) -> (BoardMark m) -> m ()
 -}
 --render board MonadGame -> IO
-
-{-
-data GameState (n :: Nat) (n' :: Nat) = GameState
-  { _board :: BoardState n n'
-  , _gameEnd :: Maybe GameEndState
-  }
-
-data GameEnv (n :: Nat) (n' :: Nat) = GameEnv
-  { _numMines :: Finite (n * n' + 1)
-  , _getAdj :: GridCoord n n' -> [GridCoord n n']
-  }
--}
---gamestate has score? parameterize it later?
---has win or lose or something (maybe bool iswin)
-
---reset (dont regenerate)
---generate start
---reveal tile
---mark tile
-
-
-
 
 --TODO doesn't require anythign from current game env
 --might later, better to split env by interface

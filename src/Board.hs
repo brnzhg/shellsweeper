@@ -20,7 +20,6 @@ ScopedTypeVariables
 module Board (
   SingleMineTile(..)
   , MultiMineTile(..)
-  , RepBoardKey(..)
   , HasRepGetAdj(..)
   , HasBoardNumSpaces(..)
   , HasRepBoardEnv(..)
@@ -111,8 +110,6 @@ class (Abelian mrk) => HasMark mrk where
   numMarkedMines :: mrk -> Natural
 
 
-class (Eq k, Hashable k) => RepBoardKey k
-
 class FR.Representable f => HasRepGetAdj f e | e -> f where
   getAdj :: e -> FR.Rep f -> [FR.Rep f]
 
@@ -127,21 +124,25 @@ class (HasTile tl, HasMark mrk, MonadState (RepBoardState tl mrk f) m) =>
 
 --TODO add lives
 --TODO rename from board to game
-instance (FRB.RepresentableB f
+instance (FRB.BoardFunctor f
          , HasRepBoardEnv f e
          , MonadReader e m
          , HasRepBoardState tl mrk f m
-         , RepBoardKey k
          , k ~ (FR.Rep f)) =>
   MonadBoard k mrk m where
   revealBoardTile k = do
-    env <- ask
     rbs <- get
-    let newBoardState =
-          revealNonMinesFromIndex rbs (getAdj env) k
-    put newBoardState
-    return $ getNext env newBoardState
+    if marksMine . view mark $ FR.index (rbs^.tileStates) k
+      then return (Nothing, [])
+      else revealBoardTile' rbs k
     where
+      revealBoardTile' rbs k = do
+        env <- ask
+        let indicesToReveal =
+              dfsUnrevealedNonMines (rbs^.tileStates) (getAdj env) k
+            newBoardState = revealIndices rbs indicesToReveal
+        put newBoardState
+        return (getNext env newBoardState, indicesToReveal)
       getNext env newBoardState
         | isMine . view tile
           $ (`FR.index` k)
@@ -199,14 +200,15 @@ startSingleMineRepBoardStateFromMines =
 
 
 dfsUnrevealedNonMines :: forall f tl mrk.
-  (Representable f
-  , RepBoardKey (FR.Rep f)
+  (FRB.BoardFunctor f
   , HasTile tl
   , HasMark mrk) =>
   f (TileState tl mrk)
   -> (FR.Rep f -> [FR.Rep f])
   -> FR.Rep f -> [FR.Rep f]
-dfsUnrevealedNonMines g adj = unfoldDfs getAdjFiltered
+dfsUnrevealedNonMines g adj =
+  filter (not . marksMine . view mark . FR.index g)
+  . unfoldDfs getAdjFiltered
   where
     getAdjFiltered i
       | getAny . foldMap Any
@@ -218,27 +220,20 @@ dfsUnrevealedNonMines g adj = unfoldDfs getAdjFiltered
       | otherwise =
         filter (not . (isMine . view tile) . FR.index g) . adj $ i
 
-revealIndices :: forall f tl mrk. FRB.RepresentableB f =>
-  f (TileState tl mrk) -> [FR.Rep f] -> f (TileState tl mrk)
-revealIndices = flip FRB.updateOver (isRevealed .~ True)
-
-revealNonMinesFromIndex :: forall f tl mrk.
-  (FRB.RepresentableB f
-  , RepBoardKey (FR.Rep f)
+revealIndices :: forall f tl mrk.
+  (FRB.BoardFunctor f
   , HasTile tl
   , HasMark mrk) =>
   RepBoardState tl mrk f
-  -> (FR.Rep f -> [FR.Rep f]) -> FR.Rep f -> RepBoardState tl mrk f
-revealNonMinesFromIndex bs adj start = bs
-  & tileStates %~ flip revealIndices indicesToReveal
+  -> [FR.Rep f] -> RepBoardState tl mrk f
+revealIndices bs indicesToReveal = bs
+  & tileStates %~ revealTileStates
   & numRevealed +~ (fromIntegral $ length indicesToReveal)
   & markSum %~ (<> invert revealMarkSum) --all marks get cleared if revealed
   where
-    revealMarkSum = mconcat . map (view mark . FR.index ts)
+    revealTileStates ts = FRB.updateOver ts (isRevealed .~ True) indicesToReveal
+    revealMarkSum = mconcat . map (view mark . FR.index (bs^.tileStates))
                     $ indicesToReveal
-    indicesToReveal = filter (not . marksMine . view mark . FR.index ts)
-                      $ dfsUnrevealedNonMines ts adj start
-    ts = bs^.tileStates
 
 {-
     (indicesToReveal, revealCount) =
@@ -250,8 +245,7 @@ revealNonMinesFromIndex bs adj start = bs
 -}
 
 markIndex :: forall f tl mrk.
-  (FRB.RepresentableB f
-  , RepBoardKey (FR.Rep f)
+  (FRB.BoardFunctor f
   , HasTile tl
   , Abelian mrk) =>
   RepBoardState tl mrk f -> (mrk -> mrk) -> FR.Rep f -> RepBoardState tl mrk f
