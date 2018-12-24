@@ -12,7 +12,8 @@ ScopedTypeVariables
 , OverloadedStrings
 , TypeApplications
 , TypeOperators
-, TypeFamilies #-}
+, TypeFamilies
+, GADTs #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
@@ -64,7 +65,6 @@ import qualified Control.Lens.Iso as LI
 import qualified Data.Functor.RepB as FRB
 import Game (MonadBoard(..))
 import Board (SingleMineTile(..)
-             , RepBoardKey(..)
              , HasRepGetAdj(..)
              , HasBoardNumSpaces(..)
              , HasRepBoardEnv(..)
@@ -79,6 +79,12 @@ data GridBoardEnv (n :: Nat) (n' :: Nat) = GridBoardEnv {
   _getAdj :: GridCoord n n' -> [GridCoord n n']
   , _boardNumMines :: Natural
 }
+
+data SomeGridBoardEnv :: * where
+  MkSomeGridBoardEnv :: SP.Sing n
+                     -> SP.Sing n'
+                     -> GridBoardEnv n n'
+                     -> SomeGridBoardEnv
 
 instance (KnownNat n, KnownNat n') =>
   HasRepGetAdj (Grid n n') (GridBoardEnv n n') where
@@ -98,11 +104,48 @@ instance (KnownNat n, KnownNat n') =>
 
 
 
-
-
 --TODO make a not dependently typed gamesettings like this to create
 --then another function for continuatiuon
 --this can let you swap board shapes?
+
+promptSomeGridBoardEnv :: forall m. MonadIO m => m SomeGridBoardEnv
+promptSomeGridBoardEnv = do
+  liftIO $ putStrLn "Enter dims:"
+  (height :: Natural) <- readDim
+  (width :: Natural) <- readDim
+  let boardSize = width * height
+  liftIO $ putStrLn "Enter mines:"
+  (mines :: Natural) <- readMines boardSize
+  return $ go mines width height
+  where
+    go :: Natural -> Natural -> Natural -> SomeGridBoardEnv
+    go mines (SP.FromSing (sw@STL.SNat)) (SP.FromSing (sh@STL.SNat)) =
+      MkSomeGridBoardEnv sw sh $ GridBoardEnv { _getAdj = squareAdjacentCoords
+                                              , _boardNumMines = mines
+                                              }
+    readDim :: (MonadIO m) => m Natural
+    readDim = untilJust $ do
+      maybeDim <- runMaybeT $ readLinePred (> 0)
+      case maybeDim of
+        Nothing -> (liftIO $ putStrLn "Dim must be >0")
+        _ -> return ()
+      return maybeDim
+    readMines :: (MonadIO m) => Natural -> m Natural
+    readMines boardSize = untilJust $ do
+      maybeMines <- runMaybeT
+                    $ readLinePred (\x -> (x > 0 && x < boardSize))
+      case maybeMines of
+        Nothing -> (liftIO $ putStrLn
+                    $ "Mines must be 0< and <" ++ show boardSize)
+        _ -> return ()
+      return maybeMines
+    readLinePred :: (Read a, MonadIO m) => (a -> Bool) -> MaybeT m a
+    readLinePred pred = MaybeT . liftIO
+                        $ (<$> getLine)
+                        $ (\x -> if pred x then Just x else Nothing) <=< readMaybe
+
+
+
 withGridBoardEnv :: forall m r. MonadIO m =>
   (forall n n'. (KnownNat n, KnownNat n') => GridBoardEnv n n' -> m r)
   -> m r
