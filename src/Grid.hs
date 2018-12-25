@@ -23,6 +23,7 @@ Grid(..)
 , gridToListOfList
 ) where
 
+import Data.Proxy
 import Data.List (mapAccumL, splitAt)
 import Data.Foldable (toList)
 import Data.Finite (Finite, getFinite, modulo, combineProduct)
@@ -51,13 +52,12 @@ import Data.Functor.RepB (BoardFunctorKey(..), BoardFunctor(..))
 import Data.Finite.Extras (packFiniteDefault)
 import ChooseFinite (indexSwapPairsChooseK
                     , vectorFromIndexSwapPairsChooseK)
-import Board (SingleMineTile(..), MultiMineTile(..))
+--import Board (SingleMineTile(..), MultiMineTile(..))
 
 
 newtype Grid (n :: Nat) (n' :: Nat) a =
   Grid { getVector :: VS.Vector (n * n') a }
   deriving (Functor, Applicative, Monad, Foldable)
---  deriving (Functor, FR.Representable)
 
 --TODO use deriving via to get other gridcoords possibly
 newtype GridCoord (n :: Nat) (n' :: Nat) = GridCoord { unCoord :: (Finite n, Finite n')}
@@ -90,7 +90,13 @@ instance (KnownNat n, KnownNat n') => Enum (GridCoord n n') where
   toEnum = L.view gridIndexCoord . toEnum
   fromEnum = fromEnum . L.view gridCoordIndex
 
-instance (KnownNat n, KnownNat n') => BoardFunctorKey (GridCoord n n')
+instance (KnownNat n, KnownNat n') => BoardFunctorKey (GridCoord n n') where
+  domainSize _ = SP.fromSing nsing * SP.fromSing nsing'
+    where
+      nsing :: STL.SNat n
+      nsing = SP.sing
+      nsing' :: STL.SNat n'
+      nsing' = SP.sing
 
 instance (KnownNat n, KnownNat n') => FD.Distributive (Grid n n') where
   distribute = FR.distributeRep

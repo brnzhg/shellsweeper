@@ -66,7 +66,7 @@ import qualified Data.Functor.RepB as FRB
 import Game (MonadBoard(..))
 import Board (SingleMineTile(..)
              , HasRepGetAdj(..)
-             , HasBoardNumSpaces(..)
+             , HasBoardNumMines(..)
              , HasRepBoardEnv(..)
              , TileState(..)
              , RepBoardState(..)
@@ -92,21 +92,10 @@ instance (KnownNat n, KnownNat n') =>
 
 --TODO RepBoardFunctor must be finite.. expose count and grid implements
 instance (KnownNat n, KnownNat n') =>
-  HasBoardNumSpaces (GridBoardEnv n n') where
-  boardNumSpaces env@(GridBoardEnv n n') =
-    (SP.fromSing nsing * SP.fromSing nsing') - (_boardNumMines env)
-    where
-      nsing :: STL.SNat n
-      nsing = SP.sing
-      nsing' :: STL.SNat n'
-      nsing' = SP.sing
+  HasBoardNumMines (GridBoardEnv n n') where
+  boardNumMines =  _boardNumMines
+
 --TODO try IORef boardstate
-
-
-
---TODO make a not dependently typed gamesettings like this to create
---then another function for continuatiuon
---this can let you swap board shapes?
 
 promptSomeGridBoardEnv :: forall m. MonadIO m => m SomeGridBoardEnv
 promptSomeGridBoardEnv = do
@@ -145,54 +134,20 @@ promptSomeGridBoardEnv = do
                         $ (\x -> if pred x then Just x else Nothing) <=< readMaybe
 
 
+withGridBoardEnv :: forall r. SomeGridBoardEnv
+  -> (forall n n'. (KnownNat n, KnownNat n') => GridBoardEnv n n' -> r)
+  -> r
+withGridBoardEnv (MkSomeGridBoardEnv (sw@STL.SNat) (sh@STL.SNat) gbe) f =
+  f gbe
 
-withGridBoardEnv :: forall m r. MonadIO m =>
-  (forall n n'. (KnownNat n, KnownNat n') => GridBoardEnv n n' -> m r)
-  -> m r
-withGridBoardEnv f = do
-  liftIO $ putStrLn "Enter dims:"
-  (height :: Natural) <- readDim
-  (width :: Natural) <- readDim
-  let boardSize = width * height
-  liftIO $ putStrLn "Enter mines:"
-  (mines :: Natural) <- readMines boardSize
-  go mines width height
-  where
-    go :: Natural -> Natural -> Natural -> m r
-    go mines (SP.FromSing sw) (SP.FromSing sh) = go' mines sw sh
-    go' :: forall w h. Natural -> STL.SNat w -> STL.SNat h -> m r
-    go' mines sw sh = STL.withKnownNat sw
-                      $ STL.withKnownNat sh
-                      $ f (GridBoardEnv { _getAdj = squareAdjacentCoords
-                                        , _boardNumMines = mines
-                                        } :: GridBoardEnv w h)
-    readDim :: (MonadIO m) => m Natural
-    readDim = untilJust $ do
-      maybeDim <- runMaybeT $ readLinePred (> 0)
-      case maybeDim of
-        Nothing -> (liftIO $ putStrLn "Dim must be >0")
-        _ -> return ()
-      return maybeDim
-    readMines :: (MonadIO m) => Natural -> m Natural
-    readMines boardSize = untilJust $ do
-      maybeMines <- runMaybeT
-                    $ readLinePred (\x -> (x > 0 && x < boardSize))
-      case maybeMines of
-        Nothing -> (liftIO $ putStrLn
-                    $ "Mines must be 0< and <" ++ show boardSize)
-        _ -> return ()
-      return maybeMines
-    readLinePred :: (Read a, MonadIO m) => (a -> Bool) -> MaybeT m a
-    readLinePred pred = MaybeT . liftIO
-      $ (<$> getLine)
-      $ (\x -> if pred x then Just x else Nothing) <=< readMaybe
 
 main :: IO ()
 main = do
-  withGridBoardEnv (\env -> putStrLn
-                            $ "Env has "
-                            ++ show (_boardNumMines env)
-                            ++ " mines")
+  gbe <- promptSomeGridBoardEnv
+  withGridBoardEnv gbe (\env -> putStrLn
+                                $ "Env has "
+                                ++ show (_boardNumMines env)
+                                ++ " mines")
   putStrLn "FINISHED!"
 
 {-

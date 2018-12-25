@@ -21,7 +21,7 @@ module Board (
   SingleMineTile(..)
   , MultiMineTile(..)
   , HasRepGetAdj(..)
-  , HasBoardNumSpaces(..)
+  , HasBoardNumMines(..)
   , HasRepBoardEnv(..)
   , TileState(..)
   , RepBoardState(..)
@@ -30,6 +30,7 @@ module Board (
   , startSingleMineRepBoardStateFromMines
   ) where
 
+import Data.Proxy
 import Data.Monoid (Sum(..))
 import Data.Group (Group(..), Abelian(..))
 
@@ -113,10 +114,10 @@ class (Abelian mrk) => HasMark mrk where
 class FR.Representable f => HasRepGetAdj f e | e -> f where
   getAdj :: e -> FR.Rep f -> [FR.Rep f]
 
-class HasBoardNumSpaces e where
-  boardNumSpaces :: e -> Natural
+class HasBoardNumMines e where
+  boardNumMines :: e -> Natural
 
-class (HasRepGetAdj f e, HasBoardNumSpaces e) => HasRepBoardEnv f e
+class (HasRepGetAdj f e, HasBoardNumMines e) => HasRepBoardEnv f e
 
 --TODO what to do for thread state?
 class (HasTile tl, HasMark mrk, MonadState (RepBoardState tl mrk f) m) =>
@@ -147,11 +148,15 @@ instance (FRB.BoardFunctor f
         | isMine . view tile
           $ (`FR.index` k)
           $ newBoardState^.tileStates = Just False
-        | newBoardState^.numRevealed == boardNumSpaces env = Just True
+        | newBoardState^.numRevealed
+          == getRepBoardNumSpaces (Proxy :: Proxy k) env = Just True
         | otherwise = Nothing
 
   markBoardTile changeMark k = modify $ (\s -> markIndex s changeMark k)
 
+getRepBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardFunctorKey k) =>
+  Proxy k -> e -> Natural
+getRepBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
 
 --TODO fix this to be good over both tile types
 singleMineTileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>

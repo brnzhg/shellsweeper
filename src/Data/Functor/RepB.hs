@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleInstances
-, FlexibleContexts #-}
+, FlexibleContexts
+, ScopedTypeVariables #-}
 
 module Data.Functor.RepB (
   BoardFunctorKey(..)
@@ -7,6 +8,7 @@ module Data.Functor.RepB (
   , FoldableBoard(..)
 ) where
 
+import Data.Proxy
 import Data.Functor.Rep
 import Data.Hashable (Hashable(..))
 
@@ -20,7 +22,9 @@ import Numeric.Natural
 
 --import qualified Data.Vector.Generic.Sized as VGS
 --import qualified Data.Vector as V
-class (Eq k, Hashable k, Bounded k, Enum k) => BoardFunctorKey k
+class (Eq k, Hashable k, Bounded k, Enum k) => BoardFunctorKey k where
+  domainSize :: Proxy k -> Natural
+  domainSize _ = fromIntegral $ length [(minBound :: k)..]
 
 class (Representable f, BoardFunctorKey (Rep f)) => BoardFunctor f where
   update :: f a -> [(Rep f, a)] -> f a
