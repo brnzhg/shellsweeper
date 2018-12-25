@@ -26,7 +26,7 @@ Grid(..)
 import Data.Proxy
 import Data.List (mapAccumL, splitAt)
 import Data.Foldable (toList)
-import Data.Finite (Finite, getFinite, modulo, combineProduct)
+import Data.Finite (Finite, getFinite, modulo)
 import Data.Bifunctor (bimap)
 import Data.Functor.Rep as FR
 import Data.Functor.RepB as FRB
@@ -34,6 +34,8 @@ import Data.Distributive as FD
 
 import Control.Monad (replicateM)
 import Control.Monad.State.Strict (State(..), get, state, evalState)
+import Control.Monad.Random (MonadInterleave, interleave)
+import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Arrow ((&&&))
 
 import Data.Hashable (Hashable(..))
@@ -52,7 +54,10 @@ import Data.Functor.RepB (BoardFunctorKey(..), BoardFunctor(..))
 import Data.Finite.Extras (packFiniteDefault)
 import ChooseFinite (indexSwapPairsChooseK
                     , vectorFromIndexSwapPairsChooseK)
---import Board (SingleMineTile(..), MultiMineTile(..))
+import Board (SingleMineTile(..)
+             , MultiMineTile(..)
+             , RepBoardState(..)
+             , startSingleMineRepBoardStateFromMines)
 
 
 newtype Grid (n :: Nat) (n' :: Nat) a =
@@ -66,13 +71,16 @@ type GridIndex (n :: Nat) (n' :: Nat) = Finite (n * n')
 
 gridIndexCoord :: forall n n'. (KnownNat n, KnownNat n') =>
   LI.Iso' (GridIndex n n') (GridCoord n n')
-gridIndexCoord = LI.iso getCoord (combineProduct . unCoord)
-  where nsing' :: STL.SNat n'
-        nsing' = SP.sing
+gridIndexCoord = LI.iso getCoord getIndex
+  where n'int :: Integer
+        n'int = fromIntegral . SP.FromSing $ (SP.sing :: STL.SNat n')
+        getIndex :: GridCoord n n' -> Finite (n * n')
+        getIndex (GridCoord (fn, fn')) =
+          modulo . fromIntegral $ (getFinite fn) * n'int + (getFinite fn')
         getCoord :: Finite (n * n') -> GridCoord n n'
         getCoord = GridCoord
                    . bimap (modulo . fromIntegral) (modulo . fromIntegral)
-                   . (`divMod` (fromIntegral . SP.fromSing $ nsing'))
+                   . (`divMod` n'int)
                    . getFinite
 
 gridCoordIndex :: forall n n'. (KnownNat n, KnownNat n') =>
@@ -125,6 +133,27 @@ squareAdjacentCoords (GridCoord (r, c)) =
                         ..
                         packFiniteDefault maxBound (fromIntegral x + 1)]
 
+--TODO rename when everything has good namespace
+--TODO consider using MonadReader for nummines and adj
+startSingleMineBoardFromSwapPairs :: (KnownNat n, KnownNat n', Monoid mrk) =>
+  Finite (n * n' + 1)
+  -> (GridCoord n n' -> [GridCoord n n'])
+  -> [(GridIndex n n', GridIndex n n')]
+  -> RepBoardState SingleMineTile mrk (Grid n n')
+startSingleMineBoardFromSwapPairs mines adj =
+  startSingleMineRepBoardStateFromMines adj
+  . Grid
+  . vectorFromIndexSwapPairsChooseK mines
+-- . L.over (L.mapped . L.both) (L.view gridCoordIndex)
+
+randomStartSingleMineBoard ::
+  (KnownNat n, KnownNat n', Monoid mrk, MonadInterleave m) =>
+  Finite (n * n' + 1)
+  -> (GridCoord n n' -> [GridCoord n n'])
+  -> m (RepBoardState SingleMineTile mrk (Grid n n'))
+randomStartSingleMineBoard mines adj =
+  startSingleMineBoardFromSwapPairs mines adj
+  <$> (indexSwapPairsChooseK mines)
 
 
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>

@@ -278,15 +278,6 @@ startBoardStateFromCoordPairs boardEnv =
 
 --make gameenv more modular like the font
 {-
-randomStartBoardState :: forall n n' e m.
-  (KnownNat n, KnownNat n', HasBoardEnv e n n', MonadInterleave m) =>
-  e n n'-> m (BoardState n n')
-randomStartBoardState boardEnv =
-  startBoardStateFromCoordPairs boardEnv
-  . over (mapped . both) (view gridIndexCoord)
-  <$> (indexPairsChooseK $ numMines boardEnv)
--}
-{-
 revealCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   Grid n n' BoardTileState -> [GridCoord n n'] -> Grid n n' BoardTileState
 revealCoords gr coords = Grid
@@ -294,16 +285,6 @@ revealCoords gr coords = Grid
   where
      tilesAtCoords' = (isRevealed .~ True) . FR.index gr <$> coords
      gridIndices = (mapped %~ view gridCoordIndex) coords
-
-revealNonMinesFromCoord :: forall n n'. (KnownNat n, KnownNat n') =>
-  BoardState n n'
-  -> (GridCoord n n' -> [GridCoord n n'])
-  -> GridCoord n n'
-  -> BoardState n n'
-revealNonMinesFromCoord bs f coord = undefined
-  where
-    gr' = revealCoords tg . dfsUnrevealedNonMines tg f
-    tg = bs ^. tileGrid
 -}
 
 {-
