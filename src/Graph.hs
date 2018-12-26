@@ -5,13 +5,17 @@ ScopedTypeVariables
 
 module Graph (
 unfoldDfs
+, unfoldDfsM
 ) where
 
 --import Control.Monad.State (MonadState)
+import Data.STRef (STRef(..), readSTRef, writeSTRef, modifySTRef')
 import Data.Maybe (isJust)
-import Control.Monad.Loops (unfoldM, dropWhileM)
+import Control.Monad.Loops (unfoldM, dropWhileM, iterateUntilM)
 import Control.Monad.ST (ST, runST)
-import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
+import Control.Monad.ST.Trans (STT, runSTT)
+import Control.Monad.ST.Trans.Internal (liftST)
+import Control.Monad.State.Strict (StateT(..), get, put, lift, evalStateT)
 import Data.Hashable (Hashable(..))
 import qualified Data.HashTable.Class as HTC
 import qualified Data.HashTable.ST.Basic as HTB
@@ -23,13 +27,11 @@ unfoldDfsStep f = do
   (ht, q) <- get
   q' <- lift $ flip dropWhileM q
         $ \x -> HTC.mutate ht x
-                $ \x' -> (Just (), isJust x')
+                $ \x' -> (Just (), isJust x') --always insert (), return value (bool to stop drop)
   case q' of
     [] -> put (ht, []) >> (return Nothing)
     (x:xs) -> put (ht, f x ++ xs) >> (return $ Just x)
 
-
---TODO cand do with MonadPlus version, kinda cool i guess (zipper dream?)
 unfoldDfs :: forall k. (Eq k, Hashable k) =>
   (k -> [k]) -> k -> [k]
 unfoldDfs f x = runST $ do
@@ -37,3 +39,60 @@ unfoldDfs f x = runST $ do
   flip evalStateT (ht, [x])
     $ unfoldM
     $ unfoldDfsStep f
+
+--TODO tell me there's an easier way to do this...
+unfoldDfsStepM :: forall h s k m. (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
+  (k -> m [k]) -> StateT (h s k (), [k]) (STT s m) (Maybe k)
+unfoldDfsStepM f = do
+  (ht, q) <- get
+  q' <- lift . liftST $ flip dropWhileM q
+        $ \x -> HTC.mutate ht x
+                $ \x' -> (Just (), isJust x')
+  case q' of
+    [] -> put (ht, []) >> (return Nothing)
+    (x:xs) -> (lift . lift $ f x)
+              >>= (\x' -> put (ht, x' ++ xs))
+              >> (return $ Just x)
+
+unfoldDfsM :: forall k m. (Eq k, Hashable k, Monad m) =>
+  (k -> m [k]) -> k -> m [k]
+unfoldDfsM f x = runSTT $ do
+  ht <- liftST HTB.new
+  flip evalStateT (ht, [x])
+    $ unfoldM
+    $ unfoldDfsStepM f
+{-
+unfoldDfsStepM :: forall h s k m. (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
+  (k -> m [k]) -> STRef s (h s k (), [k]) -> ST s (m (Maybe k))
+unfoldDfsStepM f str = do
+  undefined
+  where
+    writeQ [] r = readSTRef r >>= \(ht, _) -> writeSTRef r (ht, [])
+    writeQ (h:t) r = readSTRef r >>= \(ht, _) -> 
+    modifyStr :: STRef s (h s k (), [k]) -> ST s ()
+    modifyStr r = do
+      (ht, q) <- readSTRef r
+      q' <- modifyQ ht q
+      writeSTRef r (ht, q')
+    modifyQ :: h s k () -> [k] -> ST s [k]
+    modifyQ ht q =  flip dropWhileM q
+                    $ \x -> HTC.mutate ht x
+                            $ \x' -> (Just (), isJust x')
+-}
+{-
+unfoldDfsStepM :: forall h s k m. (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
+  (k -> m [k]) -> m (StateT (h s k (), [k]) (ST s) (Maybe k))
+unfoldDfsStepM f = undefined
+  where
+    modifyQ :: (h s k (), [k]) -> StateT (h s k (), m [k]) (m (ST s)) (Maybe k)
+    modifyQ (ht, []) = put (ht, return []) >> return Nothing
+    modifyQ (ht, (h:t)) = put (ht, (++ t) <$> f h) >> (return $ Just h)
+    sq' :: StateT (h s k (), m [k]) (ST s) (h s k (), [k])
+    sq' = do
+      (ht, mq) <- get
+      q' <- lift $ flip dropWhileM q
+            $ \x -> HTC.mutate ht x
+                    $ \x' -> (Just (), isJust x')
+      return (ht, q')
+-}
+

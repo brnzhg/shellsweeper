@@ -43,7 +43,7 @@ dependencies:
 - hashable
 - hashtables
 - transformers
-- free
+- STMonadTrans
 - groups
 
 library:

@@ -17,17 +17,13 @@ ScopedTypeVariables
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
-module Board (
+module Board2 (
   SingleMineTile(..)
   , MultiMineTile(..)
-  , HasRepGetAdj(..)
   , HasBoardNumMines(..)
-  , HasRepBoardEnv(..)
   , TileState(..)
-  , RepBoardState(..)
   , HasTile(..)
   , HasMark(..)
-  , startSingleMineRepBoardStateFromMines
   ) where
 
 import Data.Proxy
@@ -77,15 +73,13 @@ data TileState tl mrk = TileState
   , _mark :: mrk
   }
 
-data RepBoardState tl mrk f = RepBoardState
-  { _tileStates :: f (TileState tl mrk)
-  , _numRevealed :: Natural
+data BoardSum mrk = BoardSum
+  { _numRevealed :: Natural
   , _markSum :: mrk
   }
 
---makeLenses ''HasTile
 makeLenses ''TileState
-makeLenses ''RepBoardState
+makeLenses ''BoardSum
 
 
 class HasTile env where
@@ -108,20 +102,26 @@ class (Abelian mrk) => HasMark mrk where
   numMarkedMines :: mrk -> Natural
 
 
-class FR.Representable f => HasRepGetAdj f e | e -> f where
-  getAdj :: e -> FR.Rep f -> [FR.Rep f]
+class HasBoardGetAdj k e | e -> k where
+  getAdj :: e -> k -> [k]
 
 class HasBoardNumMines e where
   boardNumMines :: e -> Natural
 
-class (HasRepGetAdj f e, HasBoardNumMines e) => HasRepBoardEnv f e
+class (HasBoardGetAdj f e, HasBoardNumMines e) => HasBoardEnv f e
 
---TODO what to do for thread state?
-class (HasTile tl, HasMark mrk, MonadState (RepBoardState tl mrk f) m) =>
-      HasRepBoardState tl mrk f m
+
+class Monad m => MonadBoardState k tl mrk m | m -> k, m -> tl where
+  getTile :: k -> m tl
+  modifyBoardTiles :: ((k, tl) -> tl) -> [k] -> m ()
+  modifyAllBoardTiles :: ((k, tl) -> tl) -> m ()
+  getBoardSum :: m (BoardSum mrk)
+  modifyBoardSum :: (BoardSum mrk -> BoardSum mrk) -> m ()
+
 
 --TODO add lives
 --TODO rename from board to game
+{-
 instance (FRB.BoardFunctor f
          , HasRepBoardEnv f e
          , MonadReader e m
@@ -150,65 +150,23 @@ instance (FRB.BoardFunctor f
         | otherwise = Nothing
 
   markBoardTile changeMark k = modify $ (\s -> markIndex s changeMark k)
+-}
 
+{-
 getRepBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardFunctorKey k) =>
   Proxy k -> e -> Natural
 getRepBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
+-}
 
---TODO fix this to be good over both tile types
-singleMineTileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
-  (s -> f s) -> w Bool -> SingleMineTile
-singleMineTileFromMineStore getAdj mineStore =
-  SingleMineTile { _isMine = isMine'
-                 , _numAdjMines = numAdjMines'
-                 }
-  where
-    getNumAdjMines =  fromIntegral
-                      . getSum
-                      . foldMap (\b -> if b then Sum 1 else Sum 0)
-                      . experiment getAdj
-    (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
-
-singleMineTilesFromMines :: forall f g.
-  (Functor f, Foldable f, FR.Representable g) =>
-  (FR.Rep g -> f (FR.Rep g)) -> g Bool -> g SingleMineTile
-singleMineTilesFromMines getAdj mineRepbl = tileRepbl
-  where
-    (StoreT (Identity tileRepbl) _) =
-      extend (singleMineTileFromMineStore getAdj)
-      $ StoreT (Identity mineRepbl) undefined
-
-startRepBoardStateFromTiles :: forall f tl mrk.
-  (FR.Representable f, HasTile tl, Monoid mrk) =>
-  f tl -> RepBoardState tl mrk f
-startRepBoardStateFromTiles tiles =
-  RepBoardState { _tileStates = makeStartTileState <$> tiles , _numRevealed = 0
-                , _markSum = mempty
-                }
-  where
-    makeStartTileState t =
-      TileState { _tile = t
-                , _isRevealed = False
-                , _mark = mempty
-                }
-
---TODO make better generic over multiMine
---TODO rename so RepBoard is module and dont need to specify Rep
-startSingleMineRepBoardStateFromMines :: forall f tl mrk.
-  (FR.Representable f, Monoid mrk) =>
-  (FR.Rep f -> [FR.Rep f]) -> f Bool -> RepBoardState SingleMineTile mrk f
-startSingleMineRepBoardStateFromMines =
-  (startRepBoardStateFromTiles .) . singleMineTilesFromMines
-
-
-dfsUnrevealedNonMines :: forall f tl mrk.
-  (FRB.BoardFunctor f
+{-
+dfsUnrevealedNonMines :: forall e k tl mrk m.
+  (HasBoardGetAdj k e
   , HasTile tl
-  , HasMark mrk) =>
-  f (TileState tl mrk)
-  -> (FR.Rep f -> [FR.Rep f])
-  -> FR.Rep f -> [FR.Rep f]
-dfsUnrevealedNonMines g adj =
+  , HasMark mrk
+  , MonadBoardState k tl mrk m
+  , MonadReader e) =>
+  k -> m [k]
+dfsUnrevealedNonMines i =
   filter (not . marksMine . view mark . FR.index g)
   . unfoldDfs getAdjFiltered
   where
@@ -236,16 +194,6 @@ revealIndices bs indicesToReveal = bs
     revealTileStates ts = FRB.updateOver ts (isRevealed .~ True) indicesToReveal
     revealMarkSum = mconcat . map (view mark . FR.index (bs^.tileStates))
                     $ indicesToReveal
-
-{-
-    (indicesToReveal, revealCount) =
-      id &&& (getSum
-              . foldMap Sum
-              . map (numMines . view tile . FR.index ts))
-      $ dfsUnrevealedNonMines ts adj start
-    ts = bs^.tileStates
--}
-
 markIndex :: forall f tl mrk.
   (FRB.BoardFunctor f
   , HasTile tl
@@ -258,36 +206,4 @@ markIndex bs changeMark i = bs
     newMark = changeMark currentMark
     currentMark = view mark ts
     ts = FR.index (bs^.tileStates) i
-
-{-
-startBoardStateFromCoordPairs :: forall n n' e.
-  (KnownNat n, KnownNat n', HasBoardEnv e n n') =>
-  e n n'-> [(GridCoord n n', GridCoord n n')] -> BoardState n n'
-startBoardStateFromCoordPairs boardEnv =
-  startBoardStateFromTileGrid
-  . Grid
-  . tileRepresentableFromMines getAdj'
-  . mineVectorFromIndexPairs (numMines boardEnv)
-  . over (mapped . both) (view gridCoordIndex)
-  where
-    getAdj' = LT.traverseOf gridIndexCoord . getAdj $ boardEnv
--}
-
---make gameenv more modular like the font
-{-
-revealCoords :: forall n n'. (KnownNat n, KnownNat n') =>
-  Grid n n' BoardTileState -> [GridCoord n n'] -> Grid n n' BoardTileState
-revealCoords gr coords = Grid
-  $ getVector gr VS.// (zip gridIndices tilesAtCoords')
-  where
-     tilesAtCoords' = (isRevealed .~ True) . FR.index gr <$> coords
-     gridIndices = (mapped %~ view gridCoordIndex) coords
--}
-
-{-
--x---x---x---
-/2\*/2\1/1\1/
----x---x---x-
-\2/*\2/1\*/1\
--x---x---x---x
 -}
