@@ -9,7 +9,7 @@ unfoldDfs
 ) where
 
 --import Control.Monad.State (MonadState)
-import Data.STRef (STRef(..), readSTRef, writeSTRef, modifySTRef')
+--import Data.STRef (STRef(..), readSTRef, writeSTRef, modifySTRef')
 import Data.Maybe (isJust)
 import Control.Monad.Loops (unfoldM, dropWhileM, iterateUntilM)
 import Control.Monad.ST (ST, runST)
@@ -79,20 +79,3 @@ unfoldDfsStepM f str = do
                     $ \x -> HTC.mutate ht x
                             $ \x' -> (Just (), isJust x')
 -}
-{-
-unfoldDfsStepM :: forall h s k m. (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
-  (k -> m [k]) -> m (StateT (h s k (), [k]) (ST s) (Maybe k))
-unfoldDfsStepM f = undefined
-  where
-    modifyQ :: (h s k (), [k]) -> StateT (h s k (), m [k]) (m (ST s)) (Maybe k)
-    modifyQ (ht, []) = put (ht, return []) >> return Nothing
-    modifyQ (ht, (h:t)) = put (ht, (++ t) <$> f h) >> (return $ Just h)
-    sq' :: StateT (h s k (), m [k]) (ST s) (h s k (), [k])
-    sq' = do
-      (ht, mq) <- get
-      q' <- lift $ flip dropWhileM q
-            $ \x -> HTC.mutate ht x
-                    $ \x' -> (Just (), isJust x')
-      return (ht, q')
--}
-

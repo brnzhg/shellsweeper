@@ -3,7 +3,7 @@
 , ScopedTypeVariables #-}
 
 module Data.Functor.RepB (
-  BoardFunctorKey(..)
+  BoardKey(..)
   , BoardFunctor(..)
   , FoldableBoard(..)
 ) where
@@ -22,11 +22,11 @@ import Numeric.Natural
 
 --import qualified Data.Vector.Generic.Sized as VGS
 --import qualified Data.Vector as V
-class (Eq k, Hashable k, Bounded k, Enum k) => BoardFunctorKey k where
+class (Eq k, Hashable k, Bounded k, Enum k) => BoardKey k where
   domainSize :: Proxy k -> Natural
   domainSize _ = fromIntegral $ length [(minBound :: k)..]
 
-class (Representable f, BoardFunctorKey (Rep f)) => BoardFunctor f where
+class (Representable f, BoardKey (Rep f)) => BoardFunctor f where
   update :: f a -> [(Rep f, a)] -> f a
   update fa = updateOver fa id . map fst
 
