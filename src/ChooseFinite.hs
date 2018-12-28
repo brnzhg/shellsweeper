@@ -12,7 +12,7 @@ module ChooseFinite (
 RFinite(..)
 , indexSwapPairsChooseK
 , indexSwapPairsPermuteAll
-, vectorFromIndexSwapPairsChooseK
+, vectorSwapPairs
 ) where
 
 import System.Random (Random(..))
@@ -23,12 +23,14 @@ import GHC.TypeLits
 import Data.Traversable
 import Control.Monad (forM_)
 import Control.Monad.Random (MonadInterleave, getRandomR, interleave)
+import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Monad.ST (ST, runST)
 
-import qualified Data.Vector.Mutable as VM
+--import qualified Data.Vector.Mutable as VM
 import qualified Data.Vector.Sized as VS
-import qualified Data.Vector.Mutable.Sized as VMS
-
+--import qualified Data.Vector.Mutable.Sized as VMS
+import qualified Data.Vector.Generic.Mutable.Base as  VGMB
+import qualified Data.Vector.Generic.Mutable.Sized as VGMS
 
 newtype RFinite a = RFinite { getFin :: Finite a }
   deriving (Eq, Ord, Num, Real, Integral, Enum, Bounded)
@@ -58,7 +60,16 @@ indexSwapPairsPermuteAll :: forall n m.
 indexSwapPairsPermuteAll =
   indexSwapPairsChooseK (maxBound :: Finite (n + 1))
 
+vectorSwapPairs :: forall v n m a.
+  (KnownNat n, PrimMonad m, VGMB.MVector v a) =>
+  VGMS.MVector v n (PrimState m) a
+  -> [(Finite n, Finite n)]
+  -> m ()
+vectorSwapPairs v indexSwapPairs =
+  forM_ indexSwapPairs $ uncurry $ VGMS.swap v
 
+
+{-
 vectorFromIndexSwapPairsChooseK :: forall n.
   KnownNat n =>
   Finite (n + 1)
@@ -73,7 +84,7 @@ vectorFromIndexSwapPairsChooseK k indexPairs =
       forM_ (take (fromIntegral k) $ enumFrom minBound)
         (\i -> VMS.write v i True)
       forM_ indexPairs $ uncurry $ VMS.swap v
-      v' <- VS.freeze v
-      return v'
-
+      VS.freeze v
+      --return v'
+-}
 

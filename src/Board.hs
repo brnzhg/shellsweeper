@@ -151,7 +151,7 @@ instance (FRB.BoardFunctor f
 
   markBoardTile changeMark k = modify $ (\s -> markIndex s changeMark k)
 
-getRepBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardFunctorKey k) =>
+getRepBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardKey k) =>
   Proxy k -> e -> Natural
 getRepBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
 

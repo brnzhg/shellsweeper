@@ -50,7 +50,7 @@ import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
 
-import Data.Functor.RepB (BoardFunctorKey(..), BoardFunctor(..))
+import Data.Functor.RepB (BoardKey(..), BoardFunctor(..))
 import Data.Finite.Extras (packFiniteDefault)
 import ChooseFinite (indexSwapPairsChooseK
                     , vectorFromIndexSwapPairsChooseK)
@@ -98,7 +98,7 @@ instance (KnownNat n, KnownNat n') => Enum (GridCoord n n') where
   toEnum = L.view gridIndexCoord . toEnum
   fromEnum = fromEnum . L.view gridCoordIndex
 
-instance (KnownNat n, KnownNat n') => BoardFunctorKey (GridCoord n n') where
+instance (KnownNat n, KnownNat n') => BoardKey (GridCoord n n') where
   domainSize _ = SP.fromSing nsing * SP.fromSing nsing'
     where
       nsing :: STL.SNat n

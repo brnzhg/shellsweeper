@@ -31,7 +31,7 @@ import Data.Group (Group(..), Abelian(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
-import Data.Functor.Rep as FR
+--import Data.Functor.Rep as FR
 import Data.Monoid (Any(..))
 import Data.Traversable
 import Data.Hashable(Hashable(..))
@@ -39,12 +39,13 @@ import Data.Hashable(Hashable(..))
 
 import Control.Monad ((<=<), filterM)
 import Control.Monad.Reader (ReaderT(..), MonadReader(..))
-import Control.Monad.State (MonadState(..), modify)
+--import Control.Monad.State (MonadState(..), modify)
+--import Control.Monad.State.Strict (StateT(..), get, put, lift, evalStateT)
 
-import Control.Comonad (Comonad(..))
-import Control.Comonad.Representable.Store
-  (Store, StoreT(..), ComonadStore, store, experiment, runStore)
-import Control.Arrow ((&&&))
+--import Control.Comonad (Comonad(..))
+--import Control.Comonad.Representable.Store
+--  (Store, StoreT(..), ComonadStore, store, experiment, runStore)
+--import Control.Arrow ((&&&))
 
 import Numeric.Natural
 
@@ -115,50 +116,17 @@ class (HasBoardGetAdj f e, HasBoardNumMines e) => HasBoardEnv f e
 
 class Monad m => MonadBoardState k tls bs m | m -> k, m -> tls, m -> bs where
   getTile :: k -> m tls
-  modifyBoardTile :: (tls -> tls) -> k -> m ()
+  putTile :: k -> tls -> m ()
   modifyAllBoardTiles :: ((k, tls) -> tls) -> m ()
   getBoardSum :: m bs
   modifyBoardSum :: (bs -> bs) -> m ()
 
 
---TODO add lives
---TODO rename from board to game
-{-
-instance (FRB.BoardFunctor f
-         , HasRepBoardEnv f e
-         , MonadReader e m
-         , HasRepBoardState tl mrk f m
-         , k ~ (FR.Rep f)) =>
-  MonadBoard k mrk m where
-  revealBoardTile k = do
-    rbs <- get
-    if marksMine . view mark $ FR.index (rbs^.tileStates) k
-      then return (Nothing, [])
-      else revealBoardTile' rbs k
-    where
-      revealBoardTile' rbs k = do
-        env <- ask
-        let indicesToReveal =
-              dfsUnrevealedNonMines (rbs^.tileStates) (getAdj env) k
-            newBoardState = revealIndices rbs indicesToReveal
-        put newBoardState
-        return (getNext env newBoardState, indicesToReveal)
-      getNext env newBoardState
-        | isMine . view tile
-          $ (`FR.index` k)
-          $ newBoardState^.tileStates = Just False
-        | newBoardState^.numRevealed
-          == getRepBoardNumSpaces (Proxy :: Proxy k) env = Just True
-        | otherwise = Nothing
+--TODO add lives?
 
-  markBoardTile changeMark k = modify $ (\s -> markIndex s changeMark k)
--}
-
-{-
-getRepBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardFunctorKey k) =>
+getBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardKey k) =>
   Proxy k -> e -> Natural
-getRepBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
--}
+getBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
 
 dfsUnrevealedNonMines :: forall k e tl mrk bs m.
   (FRB.BoardKey k
@@ -185,46 +153,63 @@ dfsUnrevealedNonMines =
         else filterM (fmap (not . isMine . view tile) . getTile)
              $ getAdj env k
 
-
---TODO assumes all indices are unmarked
---TODO need StateT on top of m, do some magic count what changed and shit, cool shit
-revealIndices :: forall k tl mrk m.
+revealIndex :: forall k tl mrk m.
   (FRB.BoardKey k
   , HasTile tl
   , HasMark mrk
   , MonadBoardState k (TileState tl mrk) (BoardSum mrk) m) =>
-  [k] -> m ()
-revealIndices indicesToReveal = do
-  modifyBoardTiles
-    ((isRevealed .~ True) . view _2)
-    indicesToReveal
-  tileStates <- traverse getTile indicesToReveal
-  let numRevealedInc = fromIntegral $ length indicesToReveal
-      revealMarkSum = mconcat $ map (view mark) tileStates
+  k -> m ()
+revealIndex k = do
+  tls <- getTile k
+  let numRevealedInc = if tls^.isRevealed then 0 else 1
+      tlsMark = tls^.mark
+  putTile k $ tls
+    & isRevealed .~ True
+    & mark .~ mempty
   modifyBoardSum (\bs -> bs
                          & numRevealed +~ numRevealedInc
-                         & markSum %~ (<> invert revealMarkSum))
+                         & markSum %~ (mappend . invert $ tls^.mark))
 
-{-
-  & tileStates %~ revealTileStates
-  & numRevealed +~ (fromIntegral $ length indicesToReveal)
-  & markSum %~ (<> invert revealMarkSum) --all marks get cleared if revealed
-  where
-    revealTileStates ts = FRB.updateOver ts (isRevealed .~ True) indicesToReveal
-    revealMarkSum = mconcat . map (view mark . FR.index (bs^.tileStates))
-                    $ indicesToReveal
--}
-{-
-markIndex :: forall f tl mrk.
-  (FRB.BoardFunctor f
+revealBoardTile :: forall k e tl mrk m.
+  (FRB.BoardKey k
+  , HasBoardEnv k e
+  , MonadReader e m
   , HasTile tl
-  , Abelian mrk) =>
-  RepBoardState tl mrk f -> (mrk -> mrk) -> FR.Rep f -> RepBoardState tl mrk f
-markIndex bs changeMark i = bs
-  & tileStates %~ flip FRB.update [(i, ts & mark.~newMark)]
-  & markSum %~ (<> invert currentMark <> newMark)
+  , HasMark mrk
+  , MonadBoardState k (TileState tl mrk) (BoardSum mrk) m) =>
+  k -> m (Maybe Bool, [k])
+revealBoardTile k = (marksMine . view mark <$> tlsM)
+  >>= (\b -> if b then revealCancel else revealSuccess)
   where
-    newMark = changeMark currentMark
-    currentMark = view mark ts
-    ts = FR.index (bs^.tileStates) i
--}
+    tlsM = getTile k
+    revealCancel = return (Nothing, [])
+    revealSuccess = do
+      indicesToReveal <- dfsUnrevealedNonMines k
+      traverse revealIndex indicesToReveal
+      revealedMine <- isMine . view tile <$> tlsM
+      endFlag <- if revealedMine
+                 then return $ Just False
+                 else (do
+                          bs <- getBoardSum
+                          env <- ask
+                          let numSpaces =
+                                getBoardNumSpaces (Proxy :: Proxy k) env
+                          return $ if bs^.numRevealed == numSpaces
+                                   then Just True
+                                   else Nothing)
+      return (endFlag, indicesToReveal)
+
+modifyBoardTileMark :: forall k e tl mrk m.
+  (FRB.BoardKey k
+  , HasTile tl
+  , HasMark mrk
+  , MonadBoardState k (TileState tl mrk) (BoardSum mrk) m) =>
+  (mrk -> mrk) -> k -> m ()
+modifyBoardTileMark f k = do
+  tls <- getTile k
+  let currentMark = tls ^. mark
+      newMark = f currentMark
+  putTile k $ tls & mark .~ newMark
+  modifyBoardSum (\bs -> bs
+                         & markSum %~ (<> invert currentMark
+                                       <> newMark))
