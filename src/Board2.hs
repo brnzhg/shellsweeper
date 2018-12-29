@@ -36,7 +36,7 @@ import Data.Group (Group(..), Abelian(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
-import Data.Functor.Rep as FR
+import qualified Data.Functor.Rep as FR
 import Data.Monoid (Any(..))
 import Data.Traversable
 import Data.Hashable(Hashable(..))

@@ -1,12 +1,11 @@
 {-# LANGUAGE
 ScopedTypeVariables
 , GeneralizedNewtypeDeriving
+, FlexibleContexts
 , DataKinds
 , TypeOperators
 , KindSignatures
-, UndecidableInstances
 , AllowAmbiguousTypes
-, GeneralizedNewtypeDeriving
 , TypeFamilies
 #-}
 
@@ -19,6 +18,8 @@ Grid(..)
 , gridIndexCoord
 , gridCoordIndex
 , squareAdjacentCoords
+, singleMineMGridFromSwapPairs
+, singleMineTileGridFromMineGrid
 , gridToVecOfVec
 , gridToListOfList
 ) where
@@ -32,8 +33,9 @@ import Data.Functor.Rep as FR
 import Data.Functor.RepB as FRB
 import Data.Distributive as FD
 
-import Control.Monad (replicateM)
+import Control.Monad (replicateM, forM_)
 import Control.Monad.State.Strict (State(..), get, state, evalState)
+import Control.Monad.Reader (MonadReader(..))
 import Control.Monad.Random (MonadInterleave, interleave)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Arrow ((&&&))
@@ -41,6 +43,7 @@ import Control.Arrow ((&&&))
 import Data.Hashable (Hashable(..))
 import qualified Data.Vector as V
 import qualified Data.Vector.Sized as VS
+import qualified Data.Vector.Mutable.Sized as VMS
 
 import GHC.TypeLits
 import qualified Data.Singletons.Prelude as SP
@@ -53,16 +56,21 @@ import qualified Control.Lens.Traversal as LT
 import Data.Functor.RepB (BoardKey(..), BoardFunctor(..))
 import Data.Finite.Extras (packFiniteDefault)
 import ChooseFinite (indexSwapPairsChooseK
-                    , vectorFromIndexSwapPairsChooseK)
-import Board (SingleMineTile(..)
-             , MultiMineTile(..)
-             , RepBoardState(..)
-             , startSingleMineRepBoardStateFromMines)
+                    , vectorSwapPairs)
+import Board2 (SingleMineTile(..)
+              , MultiMineTile(..)
+              , HasBoardGetAdj(..)
+              , HasBoardNumMines(..)
+              , HasBoardEnv(..)
+              , singleMineTilesFromMines)
 
 
 newtype Grid (n :: Nat) (n' :: Nat) a =
   Grid { getVector :: VS.Vector (n * n') a }
   deriving (Functor, Applicative, Monad, Foldable)
+
+newtype MGrid (n :: Nat) (n' :: Nat) s a =
+  MGrid { getMVecotr :: VMS.MVector (n * n') s a }
 
 --TODO use deriving via to get other gridcoords possibly
 newtype GridCoord (n :: Nat) (n' :: Nat) = GridCoord { unCoord :: (Finite n, Finite n')}
@@ -133,28 +141,40 @@ squareAdjacentCoords (GridCoord (r, c)) =
                         ..
                         packFiniteDefault maxBound (fromIntegral x + 1)]
 
---TODO rename when everything has good namespace
---TODO consider using MonadReader for nummines and adj
-startSingleMineBoardFromSwapPairs :: (KnownNat n, KnownNat n', Monoid mrk) =>
+
+--TODO better use of newtype iso
+singleMineMGridFromSwapPairs :: (KnownNat n, KnownNat n', PrimMonad m) =>
   Finite (n * n' + 1)
-  -> (GridCoord n n' -> [GridCoord n n'])
   -> [(GridIndex n n', GridIndex n n')]
-  -> RepBoardState SingleMineTile mrk (Grid n n')
-startSingleMineBoardFromSwapPairs mines adj =
-  startSingleMineRepBoardStateFromMines adj
-  . Grid
-  . vectorFromIndexSwapPairsChooseK mines
+  -> m (MGrid n n' (PrimState m) Bool)
+singleMineMGridFromSwapPairs mines indexSwapPairs = do
+  mg@(MGrid v) <- MGrid <$> VMS.new
+  forM_ (take (fromIntegral mines) $ enumFrom minBound)
+    (\i -> VMS.write v i True)
+  vectorSwapPairs v indexSwapPairs
+  return mg
 -- . L.over (L.mapped . L.both) (L.view gridCoordIndex)
 
+--TODO something for SingleMineTileGrid (actually nah do at higher level for now no idea organize)
+
+singleMineTileGridFromMineGrid :: (KnownNat n,
+                                   KnownNat n',
+                                   HasBoardGetAdj (GridCoord n n') e,
+                                   MonadReader e m) =>
+  Grid n n' Bool -> m (Grid n n' SingleMineTile)
+singleMineTileGridFromMineGrid g =
+  (\env -> singleMineTilesFromMines (getAdj env) g) <$> ask
+
+{-
 randomStartSingleMineBoard ::
-  (KnownNat n, KnownNat n', Monoid mrk, MonadInterleave m) =>
+  (KnownNat n, KnownNat n', Monoid mrk, PrimMonad m, MonadInterleave m') =>
   Finite (n * n' + 1)
   -> (GridCoord n n' -> [GridCoord n n'])
-  -> m (RepBoardState SingleMineTile mrk (Grid n n'))
+  -> m' (m (MGrid n n' (PrimState m) SingleMineTile)
 randomStartSingleMineBoard mines adj =
   startSingleMineBoardFromSwapPairs mines adj
   <$> (indexSwapPairsChooseK mines)
-
+-}
 
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
   Grid n n' a -> VS.Vector n (VS.Vector n' a)
