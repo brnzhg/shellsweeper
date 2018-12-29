@@ -4,10 +4,7 @@ ScopedTypeVariables
 , TypeOperators
 , KindSignatures
 , RankNTypes
-, UndecidableInstances
-, AllowAmbiguousTypes
 , MultiParamTypeClasses
-, TypeFamilies
 , TemplateHaskell
 , FlexibleContexts
 , FlexibleInstances
@@ -20,9 +17,17 @@ ScopedTypeVariables
 module Board2 (
   SingleMineTile(..)
   , MultiMineTile(..)
+  , BoardSum(..)
+  , HasBoardGetAdj(..)
   , HasBoardNumMines(..)
+  , HasBoardEnv(..)
   , HasTile(..)
   , HasMark(..)
+  , MonadBoardState(..)
+  , getBoardNumSpaces
+  , singleMineTilesFromMines
+  , revealBoardTile
+  , modifyBoardTileMark
   ) where
 
 import Data.Proxy
@@ -31,21 +36,19 @@ import Data.Group (Group(..), Abelian(..))
 
 import Data.Finite (Finite)
 import Data.Functor.Identity (Identity(..))
---import Data.Functor.Rep as FR
+import Data.Functor.Rep as FR
 import Data.Monoid (Any(..))
 import Data.Traversable
 import Data.Hashable(Hashable(..))
---import Control.Monad (forM_)
 
 import Control.Monad ((<=<), filterM)
 import Control.Monad.Reader (ReaderT(..), MonadReader(..))
 --import Control.Monad.State (MonadState(..), modify)
 --import Control.Monad.State.Strict (StateT(..), get, put, lift, evalStateT)
-
---import Control.Comonad (Comonad(..))
---import Control.Comonad.Representable.Store
---  (Store, StoreT(..), ComonadStore, store, experiment, runStore)
---import Control.Arrow ((&&&))
+import Control.Arrow ((&&&))
+import Control.Comonad (Comonad(..))
+import Control.Comonad.Representable.Store
+  (Store, StoreT(..), ComonadStore, store, experiment, runStore)
 
 import Numeric.Natural
 
@@ -57,7 +60,7 @@ import qualified Control.Lens.Traversal as LT
 
 import qualified Data.Functor.RepB as FRB
 import Graph (unfoldDfs, unfoldDfsM)
-import Game(MonadBoard(..))
+
 
 data SingleMineTile = SingleMineTile
   { _isMine :: Bool
@@ -77,7 +80,7 @@ data TileState tl mrk = TileState
 
 data BoardSum mrk =
   BoardSum {
-  _numRevealed :: Natural
+  _numSpacesRevealed :: Natural
   , _markSum :: mrk
   }
 
@@ -128,6 +131,30 @@ getBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardKey k) =>
   Proxy k -> e -> Natural
 getBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
 
+
+singleMineTileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
+  (s -> f s) -> w Bool -> SingleMineTile
+singleMineTileFromMineStore adj mineStore =
+  SingleMineTile { _isMine = isMine'
+                 , _numAdjMines = numAdjMines'
+                 }
+  where
+    getNumAdjMines =  fromIntegral
+                      . getSum
+                      . foldMap (\b -> if b then Sum 1 else Sum 0)
+                      . experiment adj
+    (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
+
+singleMineTilesFromMines :: forall f g.
+  (Functor f, Foldable f, FR.Representable g) =>
+  (FR.Rep g -> f (FR.Rep g)) -> g Bool -> g SingleMineTile
+singleMineTilesFromMines adj mineRepbl = tileRepbl
+  where
+    (StoreT (Identity tileRepbl) _) =
+      extend (singleMineTileFromMineStore adj)
+      $ StoreT (Identity mineRepbl) undefined
+
+
 dfsUnrevealedNonMines :: forall k e tl mrk bs m.
   (FRB.BoardKey k
   , HasBoardGetAdj k e
@@ -161,13 +188,14 @@ revealIndex :: forall k tl mrk m.
   k -> m ()
 revealIndex k = do
   tls <- getTile k
-  let numRevealedInc = if tls^.isRevealed then 0 else 1
+  let numRevealedInc =
+        if tls^.isRevealed || (isMine $ tls^.tile) then 0 else 1
       tlsMark = tls^.mark
   putTile k $ tls
     & isRevealed .~ True
     & mark .~ mempty
   modifyBoardSum (\bs -> bs
-                         & numRevealed +~ numRevealedInc
+                         & numSpacesRevealed +~ numRevealedInc
                          & markSum %~ (mappend . invert $ tls^.mark))
 
 revealBoardTile :: forall k e tl mrk m.
@@ -194,7 +222,7 @@ revealBoardTile k = (marksMine . view mark <$> tlsM)
                           env <- ask
                           let numSpaces =
                                 getBoardNumSpaces (Proxy :: Proxy k) env
-                          return $ if bs^.numRevealed == numSpaces
+                          return $ if bs^.numSpacesRevealed == numSpaces
                                    then Just True
                                    else Nothing)
       return (endFlag, indicesToReveal)
