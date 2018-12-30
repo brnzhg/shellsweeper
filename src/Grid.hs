@@ -12,13 +12,15 @@ ScopedTypeVariables
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
 
 module Grid (
-Grid(..)
+  MGrid(..)
+, Grid(..)
 , GridCoord(..)
 , GridIndex(..)
 , gridIndexCoord
 , gridCoordIndex
 , squareAdjacentCoords
 , singleMineMGridFromSwapPairs
+, randomSingleMineMGrid
 , singleMineTileGridFromMineGrid
 , gridToVecOfVec
 , gridToListOfList
@@ -155,7 +157,21 @@ singleMineMGridFromSwapPairs mines indexSwapPairs = do
   return mg
 -- . L.over (L.mapped . L.both) (L.view gridCoordIndex)
 
---TODO something for SingleMineTileGrid (actually nah do at higher level for now no idea organize)
+randomSingleMineMGrid :: (KnownNat n
+                         , KnownNat n'
+                         , HasBoardNumMines e
+                         , MonadReader e m
+                         , MonadInterleave m
+                         , PrimMonad m') =>
+  m (m' (MGrid n n' (PrimState m') Bool))
+randomSingleMineMGrid = do
+  env <- ask
+  let mines = packFiniteDefault maxBound
+              $ fromIntegral
+              $ boardNumMines env
+  indexSwapPairs <- indexSwapPairsChooseK mines
+  return $ singleMineMGridFromSwapPairs mines indexSwapPairs
+
 
 singleMineTileGridFromMineGrid :: (KnownNat n,
                                    KnownNat n',
@@ -165,16 +181,6 @@ singleMineTileGridFromMineGrid :: (KnownNat n,
 singleMineTileGridFromMineGrid g =
   (\env -> singleMineTilesFromMines (getAdj env) g) <$> ask
 
-{-
-randomStartSingleMineBoard ::
-  (KnownNat n, KnownNat n', Monoid mrk, PrimMonad m, MonadInterleave m') =>
-  Finite (n * n' + 1)
-  -> (GridCoord n n' -> [GridCoord n n'])
-  -> m' (m (MGrid n n' (PrimState m) SingleMineTile)
-randomStartSingleMineBoard mines adj =
-  startSingleMineBoardFromSwapPairs mines adj
-  <$> (indexSwapPairsChooseK mines)
--}
 
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
   Grid n n' a -> VS.Vector n (VS.Vector n' a)

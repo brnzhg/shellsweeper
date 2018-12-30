@@ -10,6 +10,8 @@ ScopedTypeVariables
 , FlexibleInstances
 , FunctionalDependencies
 , DuplicateRecordFields
+, TypeFamilies
+, AllowAmbiguousTypes
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}
@@ -17,6 +19,7 @@ ScopedTypeVariables
 module Board2 (
   SingleMineTile(..)
   , MultiMineTile(..)
+  , TileState(..)
   , BoardSum(..)
   , HasBoardGetAdj(..)
   , HasBoardNumMines(..)
@@ -24,8 +27,10 @@ module Board2 (
   , HasTile(..)
   , HasMark(..)
   , MonadBoardState(..)
+  , getEmptyBoardSum
   , getBoardNumSpaces
   , singleMineTilesFromMines
+  , clearBoard
   , revealBoardTile
   , modifyBoardTileMark
   ) where
@@ -35,14 +40,14 @@ import Data.Monoid (Sum(..))
 import Data.Group (Group(..), Abelian(..))
 
 import Data.Finite (Finite)
-import Data.Functor.Identity (Identity(..))
+--import Data.Functor.Identity (Identity(..))
 import qualified Data.Functor.Rep as FR
 import Data.Monoid (Any(..))
 import Data.Traversable
-import Data.Hashable(Hashable(..))
+import Data.Hashable (Hashable(..))
 
 import Control.Monad ((<=<), filterM)
-import Control.Monad.Reader (ReaderT(..), MonadReader(..))
+import Control.Monad.Reader (MonadReader(..))
 --import Control.Monad.State (MonadState(..), modify)
 --import Control.Monad.State.Strict (StateT(..), get, put, lift, evalStateT)
 import Control.Arrow ((&&&))
@@ -63,25 +68,24 @@ import Graph (unfoldDfs, unfoldDfsM)
 
 
 data SingleMineTile = SingleMineTile
-  { _isMine :: Bool
-  , _numAdjMines :: Natural
+  { _isMine :: !Bool
+  , _numAdjMines :: !Natural
   }
 
 data MultiMineTile = MultiMineTile
-  { _numMines :: Natural
-  , _numAdjMines :: Natural
+  { _numMines :: !Natural
+  , _numAdjMines :: !Natural
   }
 
 data TileState tl mrk = TileState
-  { _tile :: tl
-  , _isRevealed :: Bool
-  , _mark :: mrk
+  { _tile :: !tl
+  , _isRevealed :: !Bool
+  , _mark :: !mrk
   }
 
-data BoardSum mrk =
-  BoardSum {
-  _numSpacesRevealed :: Natural
-  , _markSum :: mrk
+data BoardSum mrk = BoardSum
+  { _numSpacesRevealed :: !Natural
+  , _markSum :: !mrk
   }
 
 makeLenses ''TileState
@@ -107,29 +111,43 @@ class (Abelian mrk) => HasMark mrk where
   marksMine :: mrk -> Bool
   numMarkedMines :: mrk -> Natural
 
-
 class HasBoardGetAdj k e | e -> k where
   getAdj :: e -> k -> [k]
 
 class HasBoardNumMines e where
   boardNumMines :: e -> Natural
 
-class (HasBoardGetAdj f e, HasBoardNumMines e) => HasBoardEnv f e
+class (HasBoardGetAdj k e, HasBoardNumMines e) => HasBoardEnv k e
 
 
-class Monad m => MonadBoardState k tls bs m | m -> k, m -> tls, m -> bs where
-  getTile :: k -> m tls
-  putTile :: k -> tls -> m ()
-  modifyAllBoardTiles :: ((k, tls) -> tls) -> m ()
-  getBoardSum :: m bs
-  modifyBoardSum :: (bs -> bs) -> m ()
+class (Monad m
+      , FRB.BoardKey (BSKey m)
+      , HasTile (BSTile m)
+      , HasMark (BSMark m)) => MonadBoardState m where
+  type BSKey m :: *
+  type BSTile m :: *
+  type BSMark m :: *
+  getTile :: BSKey m -> m (TileState (BSTile m) (BSMark m))
+  putTile :: BSKey m -> TileState (BSTile m) (BSMark m) -> m ()
+  modifyAllBoardTiles :: ((BSKey m, TileState (BSTile m) (BSMark m)) -> TileState (BSTile m) (BSMark m)) -> m ()
+  getBoardSum :: m (BoardSum (BSMark m))
+  modifyBoardSum :: ((BoardSum (BSMark m)) -> (BoardSum (BSMark m))) -> m ()
 
+class (FRB.BoardKey (BSKey m)
+      , HasTile (BSTile m)
+      , HasMark (BSMark m)
+      , MonadBoardState m) => MonadBoardStateStandard m
+
+getEmptyBoardSum :: Monoid mrk => BoardSum mrk
+getEmptyBoardSum = BoardSum { _numSpacesRevealed = 0
+                            , _markSum = mempty
+                            }
 
 --TODO add lives?
-
 getBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardKey k) =>
   Proxy k -> e -> Natural
 getBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
+
 
 
 singleMineTileFromMineStore :: (Functor f, Foldable f, ComonadStore s w) =>
@@ -138,12 +156,11 @@ singleMineTileFromMineStore adj mineStore =
   SingleMineTile { _isMine = isMine'
                  , _numAdjMines = numAdjMines'
                  }
-  where
-    getNumAdjMines =  fromIntegral
+  where getNumAdjMines =  fromIntegral
                       . getSum
                       . foldMap (\b -> if b then Sum 1 else Sum 0)
                       . experiment adj
-    (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
+        (isMine', numAdjMines') = (&&&) extract getNumAdjMines mineStore
 
 singleMineTilesFromMines :: forall f g.
   (Functor f, Foldable f, FR.Representable g) =>
@@ -154,15 +171,18 @@ singleMineTilesFromMines adj mineRepbl = tileRepbl
       extend (singleMineTileFromMineStore adj)
       $ StoreT (Identity mineRepbl) undefined
 
+clearBoard :: MonadBoardStateStandard m => m ()
+clearBoard = do
+  modifyAllBoardTiles (\(_, tls) -> tls
+                                    & isRevealed .~ False
+                                    & mark .~ mempty)
+  modifyBoardSum (const getEmptyBoardSum)
 
-dfsUnrevealedNonMines :: forall k e tl mrk bs m.
-  (FRB.BoardKey k
-  , HasBoardGetAdj k e
+dfsUnrevealedNonMines ::
+  (HasBoardGetAdj (BSKey m) e
   , MonadReader e m
-  , HasTile tl
-  , HasMark mrk
-  , MonadBoardState k (TileState tl mrk) bs m) =>
-  k -> m [k]
+  , MonadBoardStateStandard m) =>
+  BSKey m -> m [BSKey m]
 dfsUnrevealedNonMines =
   filterM (fmap (not . marksMine . view mark) . getTile)
   <=< unfoldDfsM getAdjFiltered
@@ -180,12 +200,7 @@ dfsUnrevealedNonMines =
         else filterM (fmap (not . isMine . view tile) . getTile)
              $ getAdj env k
 
-revealIndex :: forall k tl mrk m.
-  (FRB.BoardKey k
-  , HasTile tl
-  , HasMark mrk
-  , MonadBoardState k (TileState tl mrk) (BoardSum mrk) m) =>
-  k -> m ()
+revealIndex :: MonadBoardStateStandard m => BSKey m -> m ()
 revealIndex k = do
   tls <- getTile k
   let numRevealedInc =
@@ -198,14 +213,12 @@ revealIndex k = do
                          & numSpacesRevealed +~ numRevealedInc
                          & markSum %~ (mappend . invert $ tls^.mark))
 
-revealBoardTile :: forall k e tl mrk m.
-  (FRB.BoardKey k
-  , HasBoardEnv k e
+revealBoardTile :: forall e m.
+  (FRB.BoardKey (BSKey m)
+  , HasBoardEnv (BSKey m) e
   , MonadReader e m
-  , HasTile tl
-  , HasMark mrk
-  , MonadBoardState k (TileState tl mrk) (BoardSum mrk) m) =>
-  k -> m (Maybe Bool, [k])
+  , MonadBoardStateStandard m) =>
+  BSKey m -> m (Maybe Bool, [BSKey m])
 revealBoardTile k = (marksMine . view mark <$> tlsM)
   >>= (\b -> if b then revealCancel else revealSuccess)
   where
@@ -221,18 +234,13 @@ revealBoardTile k = (marksMine . view mark <$> tlsM)
                           bs <- getBoardSum
                           env <- ask
                           let numSpaces =
-                                getBoardNumSpaces (Proxy :: Proxy k) env
+                                getBoardNumSpaces (Proxy :: Proxy (BSKey m)) env
                           return $ if bs^.numSpacesRevealed == numSpaces
                                    then Just True
                                    else Nothing)
       return (endFlag, indicesToReveal)
 
-modifyBoardTileMark :: forall k e tl mrk m.
-  (FRB.BoardKey k
-  , HasTile tl
-  , HasMark mrk
-  , MonadBoardState k (TileState tl mrk) (BoardSum mrk) m) =>
-  (mrk -> mrk) -> k -> m ()
+modifyBoardTileMark :: MonadBoardStateStandard m => (BSMark m -> BSMark m) -> BSKey m -> m ()
 modifyBoardTileMark f k = do
   tls <- getTile k
   let currentMark = tls ^. mark
@@ -241,3 +249,5 @@ modifyBoardTileMark f k = do
   modifyBoardSum (\bs -> bs
                          & markSum %~ (<> invert currentMark
                                        <> newMark))
+
+

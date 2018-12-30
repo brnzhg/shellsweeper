@@ -19,6 +19,8 @@ ScopedTypeVariables
 
 module Main where
 
+import System.Random (StdGen(..), newStdGen)
+
 import Data.Foldable
 import Data.Traversable (sequence)
 import Data.Maybe (fromMaybe, isJust, isNothing, catMaybes)
@@ -27,15 +29,16 @@ import Data.Functor.Identity (Identity(..))
 --import qualified Data.Bifunctor as BF
 import qualified Data.Functor.Rep as FR
 --import Data.Functor.Compose
-import Control.Monad ((<=<))
+import Control.Monad ((<=<), when)
 import Control.Monad.Loops (untilJust)
 --import Control.Monad.ST (ST, runST)
 import Control.Monad.Cont (ContT(..))
 import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.IO.Class
---import Control.Monad.Primitive (PrimMonad, PrimState, primToST)
+import Control.Monad.Primitive (PrimMonad, PrimState, primToST)
 import Control.Monad.Reader (ask, runReader, runReaderT, Reader, ReaderT, MonadReader)
 import Control.Monad.Trans.Maybe (MaybeT(..))
+import qualified Control.Concurrent.STM as STM
 
 import Control.Arrow ((&&&))
 import Numeric.Natural
@@ -63,21 +66,39 @@ import qualified Control.Lens as L
 import qualified Control.Lens.Iso as LI
 
 import qualified Data.Functor.RepB as FRB
-import Game (MonadBoard(..))
-import Board (SingleMineTile(..)
-             , HasRepGetAdj(..)
-             , HasBoardNumMines(..)
-             , HasRepBoardEnv(..)
-             , TileState(..)
-             , RepBoardState(..)
-             , HasTile(..)
-             , HasMark(..))
-import Grid (Grid(..), GridCoord(..), squareAdjacentCoords, gridToListOfList)
+import Board2 (SingleMineTile(..)
+              , TileState(..)
+              , BoardSum(..)
+              , HasBoardGetAdj(..)
+              , HasBoardNumMines(..)
+              , HasBoardEnv(..)
+              , HasTile(..)
+              , HasMark(..)
+              , MonadBoardState(..)
+              , getEmptyBoardSum
+              , getBoardNumSpaces)
+import Grid (MGrid(..)
+            , Grid(..)
+            , GridCoord(..)
+            , squareAdjacentCoords
+            , gridToListOfList)
+import ChooseFinite (indexSwapPairsChooseK)
 
+--TODO game env with ranodm seed
+data GameEnv be gs = GameEnv { _startGameSeed :: !StdGen
+                             , _boardEnv :: !be
+                             , _gameState :: !(STM.TVar gs)
+                             }
+
+data MGridGameState (n :: Nat) (n' :: Nat) s tl mrk = MGridGameState
+  { _currentGameSeed :: !StdGen
+  , _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
+  , _boardSum :: !(BoardSum mrk)
+  }
 
 data GridBoardEnv (n :: Nat) (n' :: Nat) = GridBoardEnv {
-  _getAdj :: GridCoord n n' -> [GridCoord n n']
-  , _boardNumMines :: Natural
+  _getAdj :: !(GridCoord n n' -> [GridCoord n n'])
+  , _boardNumMines :: !Natural
 }
 
 data SomeGridBoardEnv :: * where
@@ -87,52 +108,75 @@ data SomeGridBoardEnv :: * where
                      -> SomeGridBoardEnv
 
 instance (KnownNat n, KnownNat n') =>
-  HasRepGetAdj (Grid n n') (GridBoardEnv n n') where
+  HasBoardGetAdj (GridCoord n n') (GridBoardEnv n n') where
   getAdj = _getAdj
 
---TODO RepBoardFunctor must be finite.. expose count and grid implements
 instance (KnownNat n, KnownNat n') =>
   HasBoardNumMines (GridBoardEnv n n') where
-  boardNumMines =  _boardNumMines
+  boardNumMines = _boardNumMines
 
---TODO try IORef boardstate
+instance (KnownNat n
+         , KnownNat n'
+         , HasTile tl
+         , HasMark mrk
+         , PrimMonad m
+         , s ~ (PrimState m)) =>
+  MonadBoardState (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) where
+  type BSKey (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) = (GridCoord n n')
+  type BSTile (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) = tl
+  type BSMark (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) = mrk
+  getTile = undefined
+  putTile = undefined
+  modifyAllBoardTiles = undefined
+  getBoardSum = undefined
+  modifyBoardSum = undefined
 
-promptSomeGridBoardEnv :: forall m. MonadIO m => m SomeGridBoardEnv
+
+
+promptSeed :: IO StdGen
+promptSeed = do
+  ln <- getLine
+  if ln == []
+    then return $ read ln
+    else genNewSeed
+
+genNewSeed :: IO StdGen
+genNewSeed = do
+  g <- newStdGen
+  putStrLn $ "Generated seed: " ++ show g
+  return g
+
+promptSomeGridBoardEnv :: IO SomeGridBoardEnv
 promptSomeGridBoardEnv = do
-  liftIO $ putStrLn "Enter dims:"
+  putStrLn "Enter dims:"
   (height :: Natural) <- readDim
   (width :: Natural) <- readDim
   let boardSize = width * height
-  liftIO $ putStrLn "Enter mines:"
+  putStrLn "Enter mines:"
   (mines :: Natural) <- readMines boardSize
-  return $ go mines width height
+  return $ makeSomeGridBoardEnv mines width height
   where
-    go :: Natural -> Natural -> Natural -> SomeGridBoardEnv
-    go mines (SP.FromSing (sw@STL.SNat)) (SP.FromSing (sh@STL.SNat)) =
-      MkSomeGridBoardEnv sw sh $ GridBoardEnv { _getAdj = squareAdjacentCoords
-                                              , _boardNumMines = mines
-                                              }
-    readDim :: (MonadIO m) => m Natural
     readDim = untilJust $ do
       maybeDim <- runMaybeT $ readLinePred (> 0)
-      case maybeDim of
-        Nothing -> (liftIO $ putStrLn "Dim must be >0")
-        _ -> return ()
+      when (isNothing maybeDim) $ putStrLn "Dim must be >0"
       return maybeDim
-    readMines :: (MonadIO m) => Natural -> m Natural
     readMines boardSize = untilJust $ do
       maybeMines <- runMaybeT
                     $ readLinePred (\x -> (x > 0 && x < boardSize))
-      case maybeMines of
-        Nothing -> (liftIO $ putStrLn
-                    $ "Mines must be 0< and <" ++ show boardSize)
-        _ -> return ()
+      when (isNothing maybeMines)
+        $ putStrLn
+        $ "Mines must be 0< and <" ++ show boardSize
       return maybeMines
-    readLinePred :: (Read a, MonadIO m) => (a -> Bool) -> MaybeT m a
-    readLinePred pred = MaybeT . liftIO
+    readLinePred pred = MaybeT
                         $ (<$> getLine)
-                        $ (\x -> if pred x then Just x else Nothing) <=< readMaybe
+                        $ (\x -> if pred x then Just x else Nothing)
+                        <=< readMaybe
 
+makeSomeGridBoardEnv :: Natural -> Natural -> Natural -> SomeGridBoardEnv
+makeSomeGridBoardEnv mines (SP.FromSing (sw@STL.SNat)) (SP.FromSing (sh@STL.SNat)) =
+  MkSomeGridBoardEnv sw sh $ GridBoardEnv { _getAdj = squareAdjacentCoords
+                                          , _boardNumMines = mines
+                                          }
 
 withGridBoardEnv :: forall r. SomeGridBoardEnv
   -> (forall n n'. (KnownNat n, KnownNat n') => GridBoardEnv n n' -> r)
@@ -140,6 +184,17 @@ withGridBoardEnv :: forall r. SomeGridBoardEnv
 withGridBoardEnv (MkSomeGridBoardEnv (sw@STL.SNat) (sh@STL.SNat) gbe) f =
   f gbe
 
+
+--IO action to generate random and create a board state
+
+--TODO haskeline to parse command,
+-- out of game (display current settings)
+-- 1 change board type, adj rules
+-- 2 change dims and num mines
+-- 3 change seed
+-- play game
+
+-- in game
 
 main :: IO ()
 main = do
@@ -151,80 +206,6 @@ main = do
   putStrLn "FINISHED!"
 
 {-
-goWithBoardDims :: forall n n' m. (MonadReader GameSettings m, MonadIO m) =>
-  STL.SNat n -> STL.SNat n' -> Integer -> m ()
-goWithBoardDims sn sn' numMines =
-  STL.withKnownNat sn
-  $ STL.withKnownNat sn'
-  $ do
-  let numMinesF = packFiniteDefault maxBound numMines :: F.Finite (n * n' + 1)
-  gr <- liftIO SR.getStdGen
-  mineIndices <- flip evalRandT gr $ do
-    gr' <- getSplit
-    return $ randChooseGridCoordIndices gr' numMinesF
-  let mineCoords = L.view (L.from gridCoordIndex) <$> mineIndices
-      storeMineGrid = store (`elem` mineCoords) (minBound, minBound) :: Store (Grid n n') Bool
-      (StoreT (Identity gt) _) = mineToTileGrid getAdjacent storeMineGrid
-  liftIO $ do
-    traverse_ (putStrLn . unwords . map prettyPrintTile) $ gridToList gt -- map then sequence
-    putStrLn "Enter point:"
-    (y0 :: Natural) <- readLn
-    (x0 :: Natural) <- readLn
-    putStrLn "OK..."
-    let parsedStartCoord = do
-          fy0 <- F.packFinite . fromIntegral $ y0
-          fx0 <- F.packFinite . fromIntegral $ x0
-          return ((fy0, fx0) :: GridCoord n n')
-    case parsedStartCoord of
-      Nothing -> putStrLn "Invalid point"
-      Just startCoord -> putStrLn $ unwords . fmap show $ firstDfsNonMine gt startCoord
-
-go :: (MonadReader GameSettings m, MonadIO m) => m ()
-go = do
-  gs <- ask
-  let bs = (boardSettings gs :: BoardSettings)
-  go' (height bs) (width bs) (fromIntegral $ mines bs)
-  where go' (SP.FromSing singHeight) (SP.FromSing singWidth) =
-          goWithBoardDims singWidth singHeight
-
---bring printing out of main into go
-main :: IO ()
-main = do
-  putStrLn "Enter dims:"
-  (h :: Natural) <- readLn --should restrict to positive
-  (w :: Natural) <- readLn
-  putStrLn "Enter num mines:"
-  (numMines :: Natural) <- readLn
-  let gs = GameSettings {
-        height = h
-        , width = w
-        , mines = numMines
-        }
-  runReaderT go gs
-  putStrLn "FINISHED!"
--}
-
-{-
-type Grid (n :: Nat) (m :: Nat) =
-  Compose (VGS.Vector V.Vector n) (VGS.Vector V.Vector m)
-
-type GridCoord (n :: Nat) (m :: Nat) = (F.Finite n, F.Finite m)
-
-
-data BoardSettings = BoardSettings
-  { height:: Natural
-  , width  :: Natural
-  , mines :: Natural
-  }
-
-data BoardTile = BoardTile
-  { isMine :: Bool
-  , numAdjMines :: Natural
-  }
-
-data GameSettings = GameSettings
-  { boardSettings :: BoardSettings }
-
 prettyPrintTile :: BoardTile -> String
 prettyPrintTile (BoardTile { isMine = isMn, numAdjMines = numAdjMns })
   | isMn = "*"
