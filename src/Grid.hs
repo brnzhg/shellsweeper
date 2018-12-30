@@ -1,6 +1,7 @@
 {-# LANGUAGE
 ScopedTypeVariables
 , GeneralizedNewtypeDeriving
+, FlexibleInstances
 , FlexibleContexts
 , DataKinds
 , TypeOperators
@@ -26,9 +27,11 @@ module Grid (
 , gridToListOfList
 ) where
 
+import Data.STRef
 import Data.Proxy
 import Data.List (mapAccumL, splitAt)
 import Data.Foldable (toList)
+import Data.Traversable
 import Data.Finite (Finite, getFinite, modulo)
 import Data.Bifunctor (bimap)
 import Data.Functor.Rep as FR
@@ -36,8 +39,9 @@ import Data.Functor.RepB as FRB
 import Data.Distributive as FD
 
 import Control.Monad (replicateM, forM_)
+import Control.Monad.ST (ST(..))
 import Control.Monad.State.Strict (State(..), get, state, evalState)
-import Control.Monad.Reader (MonadReader(..))
+import Control.Monad.Reader (MonadReader(..), ReaderT(..), lift, withReaderT)
 import Control.Monad.Random (MonadInterleave, interleave)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Arrow ((&&&))
@@ -61,9 +65,14 @@ import ChooseFinite (indexSwapPairsChooseK
                     , vectorSwapPairs)
 import Board2 (SingleMineTile(..)
               , MultiMineTile(..)
+              , TileState(..)
+              , BoardSum(..)
               , HasBoardGetAdj(..)
               , HasBoardNumMines(..)
               , HasBoardEnv(..)
+              , HasTile(..)
+              , HasMark(..)
+              , MonadBoardState(..)
               , singleMineTilesFromMines)
 
 
@@ -78,6 +87,12 @@ newtype MGrid (n :: Nat) (n' :: Nat) s a =
 newtype GridCoord (n :: Nat) (n' :: Nat) = GridCoord { unCoord :: (Finite n, Finite n')}
   deriving (Eq, Show)
 type GridIndex (n :: Nat) (n' :: Nat) = Finite (n * n')
+
+
+data MGridBoardState (n :: Nat) (n' :: Nat) s tl mrk = MGridBoardState
+  { _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
+  , _boardSum :: !(STRef s (BoardSum mrk))
+  }
 
 gridIndexCoord :: forall n n'. (KnownNat n, KnownNat n') =>
   LI.Iso' (GridIndex n n') (GridCoord n n')
@@ -130,6 +145,28 @@ instance (KnownNat n, KnownNat n') => FRB.BoardFunctor (Grid n n') where
   update (Grid v) = Grid
                     . (v VS.//)
                     . (L.mapped . L._1 L.%~ L.view (gridCoordIndex))
+
+--TODO make this shit better with lenses
+instance (KnownNat n
+         , KnownNat n'
+         , HasTile tl
+         , HasMark mrk) =>
+  MonadBoardState (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) where
+  type BSKey (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) = (GridCoord n n')
+  type BSTile (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) = tl
+  type BSMark (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) = mrk
+  getTile k = do
+    (MGrid v) <- _boardTileGrid <$> ask
+    lift $ VMS.read v $ k L.^. gridCoordIndex
+  putTile k tls = do
+    (MGrid v) <- _boardTileGrid <$> ask
+    lift $ VMS.write v (k L.^. gridCoordIndex) tls
+  modifyAllBoardTiles f = do
+    (MGrid v) <- _boardTileGrid <$> ask
+    lift $ forM_ [minBound..maxBound]
+      (\k -> VMS.modify v (\tls -> f (k, tls)) (k L.^. gridCoordIndex))
+  getBoardSum = ask >>= (lift . readSTRef . _boardSum)
+  modifyBoardSum f = ask >>= (lift . flip modifySTRef f . _boardSum)
 
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>

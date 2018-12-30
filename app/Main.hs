@@ -91,8 +91,7 @@ data GameEnv be gs = GameEnv { _startGameSeed :: !StdGen
                              }
 
 data MGridGameState (n :: Nat) (n' :: Nat) s tl mrk = MGridGameState
-  { _currentGameSeed :: !StdGen
-  , _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
+  { _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
   , _boardSum :: !(BoardSum mrk)
   }
 
@@ -121,11 +120,11 @@ instance (KnownNat n
          , HasMark mrk
          , PrimMonad m
          , s ~ (PrimState m)) =>
-  MonadBoardState (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) where
-  type BSKey (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) = (GridCoord n n')
-  type BSTile (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) = tl
-  type BSMark (ReaderT (GameEnv be (MGridGameState n n' s tl mrk)) m) = mrk
-  getTile = undefined
+  MonadBoardState (ReaderT (MGridGameState n n' s tl mrk) m) where
+  type BSKey (ReaderT (MGridGameState n n' s tl mrk) m) = (GridCoord n n')
+  type BSTile (ReaderT (MGridGameState n n' s tl mrk) m) = tl
+  type BSMark (ReaderT (MGridGameState n n' s tl mrk) m) = mrk
+  getTile k = undefined
   putTile = undefined
   modifyAllBoardTiles = undefined
   getBoardSum = undefined
