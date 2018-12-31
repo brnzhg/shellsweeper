@@ -17,6 +17,7 @@ module Grid (
 , Grid(..)
 , GridCoord(..)
 , GridIndex(..)
+, MGridBoardState(..)
 , gridIndexCoord
 , gridCoordIndex
 , squareAdjacentCoords
@@ -39,9 +40,9 @@ import Data.Functor.RepB as FRB
 import Data.Distributive as FD
 
 import Control.Monad (replicateM, forM_)
-import Control.Monad.ST (ST(..))
+import Control.Monad.ST (ST(..), runST)
 import Control.Monad.State.Strict (State(..), get, state, evalState)
-import Control.Monad.Reader (MonadReader(..), ReaderT(..), lift, withReaderT)
+import Control.Monad.Reader (MonadReader(..), ReaderT(..), lift, runReaderT)
 import Control.Monad.Random (MonadInterleave, interleave)
 import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Arrow ((&&&))
@@ -73,6 +74,7 @@ import Board2 (SingleMineTile(..)
               , HasTile(..)
               , HasMark(..)
               , MonadBoardState(..)
+              , getEmptyBoardSum
               , singleMineTilesFromMines)
 
 
@@ -111,6 +113,16 @@ gridIndexCoord = LI.iso getCoord getIndex
 gridCoordIndex :: forall n n'. (KnownNat n, KnownNat n') =>
   LI.Iso' (GridCoord n n') (GridIndex n n')
 gridCoordIndex = LI.from gridIndexCoord
+
+--TODO these are temporary i think, better way to do this
+freezeGrid :: forall n n' m a. (KnownNat n, KnownNat n', PrimMonad m) =>
+  MGrid n n' (PrimState m) a -> m (Grid n n' a)
+freezeGrid (MGrid v) = Grid <$> VS.freeze v
+
+thawGrid :: forall n n' m a. (KnownNat n, KnownNat n', PrimMonad m) =>
+  Grid n n' a -> m (MGrid n n' (PrimState m) a)
+thawGrid (Grid v) = MGrid <$> VS.thaw v
+
 
 instance (KnownNat n, KnownNat n') => Hashable (GridCoord n n') where
   hashWithSalt i = hashWithSalt i . L.view gridCoordIndex
@@ -218,6 +230,35 @@ singleMineTileGridFromMineGrid :: (KnownNat n,
 singleMineTileGridFromMineGrid g =
   (\env -> singleMineTilesFromMines (getAdj env) g) <$> ask
 
+--TODO split this in singleMineTileGrid
+randomSingleMineMGridBoardState :: forall n n' e m mrk s.
+  (KnownNat n
+  , KnownNat n'
+  , HasBoardEnv (GridCoord n n') e
+  , MonadReader e m
+  , MonadInterleave m
+  , HasMark mrk) =>
+  m (ST s (MGridBoardState n n' s SingleMineTile mrk))
+randomSingleMineMGridBoardState = do
+  (stMnGrid :: ST s (MGrid n n' s Bool)) <- randomSingleMineMGrid
+  env <- ask
+  let stBs = do
+        mnGrid <- stMnGrid
+        fzMnGrid <- freezeGrid mnGrid
+        fzTlGrid <- flip runReaderT env $ singleMineTileGridFromMineGrid fzMnGrid
+        let fzTlsGrid = fmap (\tl -> TileState { _tile = tl
+                                               , _isRevealed = False
+                                               , _mark = mempty
+                                               }) fzTlGrid
+        tlsGrid <- thawGrid fzTlsGrid
+        emptyBoardSum <- newSTRef getEmptyBoardSum
+        return MGridBoardState { _boardTileGrid = tlsGrid
+                               , _boardSum = emptyBoardSum
+                               }
+  return stBs
+
+
+
 
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
   Grid n n' a -> VS.Vector n (VS.Vector n' a)
@@ -234,13 +275,3 @@ gridToListOfList = evalState
   where
     m = state $ splitAt $ fromIntegral (maxBound :: Finite n')
 
-
-{-
-(//) :: forall n n' a. (KnownNat n, KnownNat n') =>
-  Grid n n' a -> [(Finite n, [(Finite n', a)])] -> Grid n n' a
-(//) (Compose gr) updates =
-  Compose $ gr VS.// updates'
-  where updates' = flip map updates
-                   (\(rowIdx, updatesForRow) ->
-                      (rowIdx, gr `VS.index` rowIdx VS.// updatesForRow))
--}
