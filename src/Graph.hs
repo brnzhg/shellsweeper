@@ -5,7 +5,8 @@ ScopedTypeVariables
 
 module Graph (
 unfoldDfs
-, unfoldDfsM
+, unfoldDfsPrim
+, unfoldDfsSTT
 ) where
 
 --import Control.Monad.State (MonadState)
@@ -20,53 +21,31 @@ import Control.Monad.ST (ST, runST)
 import Control.Monad.ST.Trans (STT, runSTT)
 import Control.Monad.ST.Trans.Internal (liftST)
 import Control.Monad.Primitive (PrimMonad, PrimState, stToPrim)
-import Control.Monad.Reader (ReaderT(..), ask, runReaderT)
-import Control.Monad.State.Strict (StateT(..), get, put, lift, evalStateT)
+import Control.Monad.Reader (ReaderT(..), ask, runReaderT, lift)
 
 unfoldDfsStep :: forall h s k. (Eq k, Hashable k, HTC.HashTable h) =>
-  (k -> [k]) -> StateT (h s k (), [k]) (ST s) (Maybe k)
+  (k -> [k]) -> ReaderT (h s k (), STRef s [k]) (ST s) (Maybe k)
 unfoldDfsStep f = do
-  (ht, q) <- get
-  q' <- lift $ flip dropWhileM q
-        $ \x -> HTC.mutate ht x
-                $ \x' -> (Just (), isJust x') --always insert (), return value (bool to stop drop)
-  case q' of
-    [] -> put (ht, []) >> (return Nothing)
-    (x:xs) -> put (ht, f x ++ xs) >> (return $ Just x)
+  (ht, qref) <- ask
+  lift $ do
+    q <- readSTRef qref
+    q' <- flip dropWhileM q
+          $ \x -> HTC.mutate ht x
+                  $ \x' -> (Just (), isJust x') --always insert (), return value (bool to stop drop)
+    case q' of
+      [] -> writeSTRef qref [] >> (return Nothing)
+      (x:xs) -> (writeSTRef qref $ f x ++ xs) >> (return $ Just x)
 
 unfoldDfs :: forall k. (Eq k, Hashable k) =>
   (k -> [k]) -> k -> [k]
 unfoldDfs f x = runST $ do
   ht <- HTB.new
-  flip evalStateT (ht, [x])
-    $ unfoldM
-    $ unfoldDfsStep f
-
---TODO tell me there's an easier way to do this...
-unfoldDfsStepM :: forall h s k m. (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
-  (k -> m [k]) -> StateT (h s k (), [k]) (STT s m) (Maybe k)
-unfoldDfsStepM f = do
-  (ht, q) <- get
-  q' <- lift . liftST $ flip dropWhileM q
-        $ \x -> HTC.mutate ht x
-                $ \x' -> (Just (), isJust x')
-  case q' of
-    [] -> put (ht, []) >> (return Nothing)
-    (x:xs) -> (lift . lift $ f x)
-              >>= (\x' -> put (ht, x' ++ xs))
-              >> (return $ Just x)
-
-unfoldDfsM :: forall k m. (Eq k, Hashable k, Monad m) =>
-  (k -> m [k]) -> k -> m [k]
-unfoldDfsM f x = runSTT $ do
-  ht <- liftST HTB.new
-  flip evalStateT (ht, [x])
-    $ unfoldM
-    $ unfoldDfsStepM f
-
+  qref <- newSTRef [x]
+  flip runReaderT (ht, qref) . unfoldM $ unfoldDfsStep f
 
 unfoldDfsStepPrim :: (Eq k, Hashable k, HTC.HashTable h, PrimMonad m) =>
-  (k -> m [k]) -> ReaderT ((h (PrimState m) k (), STRef (PrimState m) [k])) m (Maybe k)
+  (k -> m [k])
+  -> ReaderT (h (PrimState m) k (), STRef (PrimState m) [k]) m (Maybe k)
 unfoldDfsStepPrim f = do
   (ht, qref) <- ask
   q' <- lift . stToPrim $ do
@@ -92,21 +71,28 @@ unfoldDfsPrim f x = stToPrim envST
       qref <- newSTRef [x]
       return (ht, qref)
 
-{-
-unfoldDfsStepM :: forall h s k m. (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
-  (k -> m [k]) -> STRef s (h s k (), [k]) -> ST s (m (Maybe k))
-unfoldDfsStepM f str = do
-  undefined
+unfoldDfsStepSTT :: (Eq k, Hashable k, HTC.HashTable h, Monad m) =>
+  (k -> m [k]) -> ReaderT (h s k (), STRef s [k]) (STT s m) (Maybe k)
+unfoldDfsStepSTT f = do
+  (ht, qref) <- ask
+  lift $ do
+    q' <- liftST $ do
+      q <- readSTRef qref
+      flip dropWhileM q
+        $ \x -> HTC.mutate ht x
+                $ \x' -> (Just (), isJust x')
+    case q' of
+      [] -> (liftST $ writeSTRef qref []) >> (return Nothing)
+      (x:xs) -> (lift $ f x)
+                >>= (\x' -> liftST . writeSTRef qref $ x' ++ xs)
+                >> (return $ Just x)
+
+unfoldDfsSTT :: forall k s m. (Eq k, Hashable k, Monad m) =>
+  (k -> m [k]) -> k -> STT s m [k]
+unfoldDfsSTT f x = liftST envST
+                   >>= (\env -> flip runReaderT env . unfoldM $ unfoldDfsStepSTT f)
   where
-    writeQ [] r = readSTRef r >>= \(ht, _) -> writeSTRef r (ht, [])
-    writeQ (h:t) r = readSTRef r >>= \(ht, _) -> 
-    modifyStr :: STRef s (h s k (), [k]) -> ST s ()
-    modifyStr r = do
-      (ht, q) <- readSTRef r
-      q' <- modifyQ ht q
-      writeSTRef r (ht, q')
-    modifyQ :: h s k () -> [k] -> ST s [k]
-    modifyQ ht q =  flip dropWhileM q
-                    $ \x -> HTC.mutate ht x
-                            $ \x' -> (Just (), isJust x')
--}
+    envST = do
+      ht <- HTB.new
+      qref <- newSTRef [x]
+      return (ht, qref)

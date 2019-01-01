@@ -48,6 +48,7 @@ import Data.Hashable (Hashable(..))
 
 import Control.Monad ((<=<), filterM)
 import Control.Monad.Reader (MonadReader(..))
+import Control.Monad.Primitive (PrimMonad, PrimState)
 --import Control.Monad.State (MonadState(..), modify)
 --import Control.Monad.State.Strict (StateT(..), get, put, lift, evalStateT)
 import Control.Arrow ((&&&))
@@ -64,7 +65,7 @@ import qualified Control.Lens.Iso as LI
 import qualified Control.Lens.Traversal as LT
 
 import qualified Data.Functor.RepB as FRB
-import Graph (unfoldDfs, unfoldDfsM)
+import Graph (unfoldDfs, unfoldDfsPrim)
 
 
 data SingleMineTile = SingleMineTile
@@ -133,17 +134,12 @@ class (Monad m
   getBoardSum :: m (BoardSum (BSMark m))
   modifyBoardSum :: ((BoardSum (BSMark m)) -> (BoardSum (BSMark m))) -> m ()
 
-class (FRB.BoardKey (BSKey m)
-      , HasTile (BSTile m)
-      , HasMark (BSMark m)
-      , MonadBoardState m) => MonadBoardStateStandard m
 
 getEmptyBoardSum :: Monoid mrk => BoardSum mrk
 getEmptyBoardSum = BoardSum { _numSpacesRevealed = 0
                             , _markSum = mempty
                             }
 
---TODO add lives?
 getBoardNumSpaces :: (HasBoardNumMines e, FRB.BoardKey k) =>
   Proxy k -> e -> Natural
 getBoardNumSpaces p env = FRB.domainSize p - boardNumMines env
@@ -171,7 +167,7 @@ singleMineTilesFromMines adj mineRepbl = tileRepbl
       extend (singleMineTileFromMineStore adj)
       $ StoreT (Identity mineRepbl) undefined
 
-clearBoard :: MonadBoardStateStandard m => m ()
+clearBoard :: MonadBoardState m => m ()
 clearBoard = do
   modifyAllBoardTiles (\(_, tls) -> tls
                                     & isRevealed .~ False
@@ -181,11 +177,12 @@ clearBoard = do
 dfsUnrevealedNonMines ::
   (HasBoardGetAdj (BSKey m) e
   , MonadReader e m
-  , MonadBoardStateStandard m) =>
+  , MonadBoardState m
+  , PrimMonad m) =>
   BSKey m -> m [BSKey m]
 dfsUnrevealedNonMines =
   filterM (fmap (not . marksMine . view mark) . getTile)
-  <=< unfoldDfsM getAdjFiltered
+  <=< unfoldDfsPrim getAdjFiltered
   where
     getAdjFiltered k = do
       tls <- getTile k
@@ -200,7 +197,7 @@ dfsUnrevealedNonMines =
         else filterM (fmap (not . isMine . view tile) . getTile)
              $ getAdj env k
 
-revealIndex :: MonadBoardStateStandard m => BSKey m -> m ()
+revealIndex :: MonadBoardState m => BSKey m -> m ()
 revealIndex k = do
   tls <- getTile k
   let numRevealedInc =
@@ -217,7 +214,8 @@ revealBoardTile :: forall e m.
   (FRB.BoardKey (BSKey m)
   , HasBoardEnv (BSKey m) e
   , MonadReader e m
-  , MonadBoardStateStandard m) =>
+  , MonadBoardState m
+  , PrimMonad m) =>
   BSKey m -> m (Maybe Bool, [BSKey m])
 revealBoardTile k = (marksMine . view mark <$> tlsM)
   >>= (\b -> if b then revealCancel else revealSuccess)
@@ -240,7 +238,7 @@ revealBoardTile k = (marksMine . view mark <$> tlsM)
                                    else Nothing)
       return (endFlag, indicesToReveal)
 
-modifyBoardTileMark :: MonadBoardStateStandard m => (BSMark m -> BSMark m) -> BSKey m -> m ()
+modifyBoardTileMark :: MonadBoardState m => (BSMark m -> BSMark m) -> BSKey m -> m ()
 modifyBoardTileMark f k = do
   tls <- getTile k
   let currentMark = tls ^. mark

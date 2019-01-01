@@ -23,7 +23,9 @@ module Grid (
 , squareAdjacentCoords
 , singleMineMGridFromSwapPairs
 , randomSingleMineMGrid
-, singleMineTileGridFromMineGrid
+, singleMineTileGridFromMines
+, singleMineMGridBoardStateFromTiles
+, randomSingleMineMGridBoardState
 , gridToVecOfVec
 , gridToListOfList
 ) where
@@ -225,16 +227,33 @@ randomSingleMineMGrid = do
   return $ singleMineMGridFromSwapPairs mines indexSwapPairs
 
 
-singleMineTileGridFromMineGrid :: (KnownNat n,
-                                   KnownNat n',
-                                   HasBoardGetAdj (GridCoord n n') e,
-                                   MonadReader e m) =>
+singleMineTileGridFromMines ::
+  (KnownNat n
+  , KnownNat n'
+  , HasBoardGetAdj (GridCoord n n') e
+  , MonadReader e m) =>
   Grid n n' Bool -> m (Grid n n' SingleMineTile)
-singleMineTileGridFromMineGrid g =
+singleMineTileGridFromMines g =
   (\env -> singleMineTilesFromMines (getAdj env) g) <$> ask
 
---TODO split this in singleMineTileGrid
---this is given to the MonadBoard stack as env, this (peel off random) >>= (\env -> runReaderT env stack)
+
+singleMineMGridBoardStateFromTiles ::
+  (KnownNat n
+  , KnownNat n'
+  , HasMark mrk
+  , PrimMonad m) =>
+  Grid n n' SingleMineTile -> m (MGridBoardState n n' (PrimState m) SingleMineTile mrk)
+singleMineMGridBoardStateFromTiles tlGrid = do
+  let fzTlsGrid = fmap (\tl -> TileState { _tile = tl
+                                         , _isRevealed = False
+                                         , _mark = mempty
+                                         }) tlGrid
+  tlsGrid <- thawGrid fzTlsGrid
+  emptyBoardSum <- newMutVar getEmptyBoardSum
+  return MGridBoardState { _boardTileGrid = tlsGrid
+                         , _boardSum = emptyBoardSum
+                         }
+
 randomSingleMineMGridBoardState :: forall n n' e m mrk m'.
   (KnownNat n
   , KnownNat n'
@@ -246,23 +265,13 @@ randomSingleMineMGridBoardState :: forall n n' e m mrk m'.
   m (m' (MGridBoardState n n' (PrimState m') SingleMineTile mrk))
 randomSingleMineMGridBoardState = do
   (stMnGrid :: m' (MGrid n n' (PrimState m') Bool)) <- randomSingleMineMGrid
+  fzMnGrid <- return $ do
+    mnGrid <- stMnGrid
+    freezeGrid mnGrid
   env <- ask
-  let stBs = do
-        mnGrid <- stMnGrid
-        fzMnGrid <- freezeGrid mnGrid
-        fzTlGrid <- flip runReaderT env $ singleMineTileGridFromMineGrid fzMnGrid
-        let fzTlsGrid = fmap (\tl -> TileState { _tile = tl
-                                               , _isRevealed = False
-                                               , _mark = mempty
-                                               }) fzTlGrid
-        tlsGrid <- thawGrid fzTlsGrid
-        emptyBoardSum <- newMutVar getEmptyBoardSum
-        return MGridBoardState { _boardTileGrid = tlsGrid
-                               , _boardSum = emptyBoardSum
-                               }
-  return stBs
-
-
+  return $ fzMnGrid
+    >>= flip runReaderT env . singleMineTileGridFromMines
+    >>= singleMineMGridBoardStateFromTiles
 
 
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
