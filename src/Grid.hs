@@ -29,6 +29,7 @@ module Grid (
 ) where
 
 import Data.STRef
+import Data.Primitive.MutVar
 import Data.Proxy
 import Data.List (mapAccumL, splitAt)
 import Data.Foldable (toList)
@@ -93,7 +94,7 @@ type GridIndex (n :: Nat) (n' :: Nat) = Finite (n * n')
 
 data MGridBoardState (n :: Nat) (n' :: Nat) s tl mrk = MGridBoardState
   { _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
-  , _boardSum :: !(STRef s (BoardSum mrk))
+  , _boardSum :: !(MutVar s (BoardSum mrk))
   }
 
 gridIndexCoord :: forall n n'. (KnownNat n, KnownNat n') =>
@@ -162,11 +163,13 @@ instance (KnownNat n, KnownNat n') => FRB.BoardFunctor (Grid n n') where
 instance (KnownNat n
          , KnownNat n'
          , HasTile tl
-         , HasMark mrk) =>
-  MonadBoardState (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) where
-  type BSKey (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) = (GridCoord n n')
-  type BSTile (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) = tl
-  type BSMark (ReaderT (MGridBoardState n n' s tl mrk) (ST s)) = mrk
+         , HasMark mrk
+         , PrimMonad m
+         , PrimState m ~ s) =>
+  MonadBoardState (ReaderT (MGridBoardState n n' s tl mrk) m) where
+  type BSKey (ReaderT (MGridBoardState n n' s tl mrk) m) = (GridCoord n n')
+  type BSTile (ReaderT (MGridBoardState n n' s tl mrk) m) = tl
+  type BSMark (ReaderT (MGridBoardState n n' s tl mrk) m) = mrk
   getTile k = do
     (MGrid v) <- _boardTileGrid <$> ask
     lift $ VMS.read v $ k L.^. gridCoordIndex
@@ -177,8 +180,8 @@ instance (KnownNat n
     (MGrid v) <- _boardTileGrid <$> ask
     lift $ forM_ [minBound..maxBound]
       (\k -> VMS.modify v (\tls -> f (k, tls)) (k L.^. gridCoordIndex))
-  getBoardSum = ask >>= (lift . readSTRef . _boardSum)
-  modifyBoardSum f = ask >>= (lift . flip modifySTRef f . _boardSum)
+  getBoardSum = ask >>= (lift . readMutVar . _boardSum)
+  modifyBoardSum f = ask >>= (lift . flip modifyMutVar' f . _boardSum)
 
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
@@ -231,16 +234,18 @@ singleMineTileGridFromMineGrid g =
   (\env -> singleMineTilesFromMines (getAdj env) g) <$> ask
 
 --TODO split this in singleMineTileGrid
-randomSingleMineMGridBoardState :: forall n n' e m mrk s.
+--this is given to the MonadBoard stack as env, this (peel off random) >>= (\env -> runReaderT env stack)
+randomSingleMineMGridBoardState :: forall n n' e m mrk m'.
   (KnownNat n
   , KnownNat n'
   , HasBoardEnv (GridCoord n n') e
   , MonadReader e m
   , MonadInterleave m
-  , HasMark mrk) =>
-  m (ST s (MGridBoardState n n' s SingleMineTile mrk))
+  , HasMark mrk
+  , PrimMonad m') =>
+  m (m' (MGridBoardState n n' (PrimState m') SingleMineTile mrk))
 randomSingleMineMGridBoardState = do
-  (stMnGrid :: ST s (MGrid n n' s Bool)) <- randomSingleMineMGrid
+  (stMnGrid :: m' (MGrid n n' (PrimState m') Bool)) <- randomSingleMineMGrid
   env <- ask
   let stBs = do
         mnGrid <- stMnGrid
@@ -251,7 +256,7 @@ randomSingleMineMGridBoardState = do
                                                , _mark = mempty
                                                }) fzTlGrid
         tlsGrid <- thawGrid fzTlsGrid
-        emptyBoardSum <- newSTRef getEmptyBoardSum
+        emptyBoardSum <- newMutVar getEmptyBoardSum
         return MGridBoardState { _boardTileGrid = tlsGrid
                                , _boardSum = emptyBoardSum
                                }
