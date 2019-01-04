@@ -1,9 +1,9 @@
 {-# LANGUAGE
 ScopedTypeVariables
+, GeneralizedNewtypeDeriving
 , DuplicateRecordFields
 , FlexibleContexts
 , FlexibleInstances
-, FunctionalDependencies
 , MultiParamTypeClasses
 , RankNTypes
 , KindSignatures
@@ -29,13 +29,14 @@ import Data.Functor.Identity (Identity(..))
 --import qualified Data.Bifunctor as BF
 import qualified Data.Functor.Rep as FR
 --import Data.Functor.Compose
-import Control.Monad ((<=<), when)
+import Control.Monad (join, (<=<), when)
+import Control.Monad.Base (MonadBase(..), liftBase)
 import Control.Monad.Loops (untilJust)
---import Control.Monad.ST (ST, runST)
-import Control.Monad.Cont (ContT(..))
+import Control.Monad.ST (ST, runST, stToIO)
+--import Control.Monad.Cont (ContT(..))
 import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
 import Control.Monad.IO.Class
-import Control.Monad.Primitive (PrimMonad, PrimState, primToST)
+import Control.Monad.Primitive (PrimMonad, PrimState, primToST, RealWorld)
 import Control.Monad.Reader (ask, runReader, runReaderT, Reader, ReaderT, MonadReader)
 import Control.Monad.Trans.Maybe (MaybeT(..))
 import qualified Control.Concurrent.STM as STM
@@ -55,10 +56,15 @@ import qualified Data.Vector.Generic.Sized as VGS
 --import qualified Data.Vector.Generic.Mutable.Sized as VGMS
 --import GHC.Generics
 
-import Data.Hashable (Hashable(..))
+--import Data.Hashable (Hashable(..))
 
 import qualified System.Random as SR
-import Control.Monad.Random (MonadSplit, MonadRandom, RandomGen, evalRandT, evalRand, getSplit)
+import Control.Monad.Random (MonadSplit
+                            , MonadRandom
+                            , RandomGen
+                            , evalRandT
+                            , evalRand
+                            , getSplit)
 
 import GHC.TypeLits
 
@@ -80,7 +86,16 @@ import Board2 (SingleMineTile(..)
 import Grid (MGrid(..)
             , Grid(..)
             , GridCoord(..)
+            , MGridBoardState(..)
+            , MGridBoardReader(..)
             , squareAdjacentCoords
+            , gridToListOfList
+            , singleMineMGridFromSwapPairs
+            , randomSingleMineMGrid
+            , singleMineTileGridFromMines
+            , singleMineMGridBoardStateFromTiles
+            , randomSingleMineMGridBoardState
+            , gridToVecOfVec
             , gridToListOfList)
 import ChooseFinite (indexSwapPairsChooseK)
 
@@ -89,12 +104,6 @@ data GameEnv be gs = GameEnv { _startGameSeed :: !StdGen
                              , _boardEnv :: !be
                              , _gameState :: !(STM.TVar gs)
                              }
-{-
-data MGridGameState (n :: Nat) (n' :: Nat) s tl mrk = MGridGameState
-  { _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
-  , _boardSum :: !(BoardSum mrk)
-  }
--}
 
 data GridBoardEnv (n :: Nat) (n' :: Nat) = GridBoardEnv {
   _getAdj :: !(GridCoord n n' -> [GridCoord n n'])
@@ -107,6 +116,14 @@ data SomeGridBoardEnv :: * where
                      -> GridBoardEnv n n'
                      -> SomeGridBoardEnv
 
+type MGridGameEnv (n :: Nat) (n' :: Nat) s tl mrk =
+  GameEnv (GridBoardEnv n n') (MGridBoardState n n' s tl mrk)
+
+newtype MGridGame (n :: Nat) (n' :: Nat) tl mrk a =
+  MGridGame { unMGridGame :: ReaderT (MGridGameEnv n n' RealWorld tl mrk) IO a }
+  deriving (Functor, Applicative, Monad, MonadReader (MGridGameEnv n n' RealWorld tl mrk), MonadIO)
+
+
 instance (KnownNat n, KnownNat n') =>
   HasBoardGetAdj (GridCoord n n') (GridBoardEnv n n') where
   getAdj = _getAdj
@@ -114,6 +131,22 @@ instance (KnownNat n, KnownNat n') =>
 instance (KnownNat n, KnownNat n') =>
   HasBoardNumMines (GridBoardEnv n n') where
   boardNumMines = _boardNumMines
+
+
+--TODO make better with lenses
+withMGridBoardReader :: (KnownNat n, KnownNat n', HasTile tl, HasMark mrk) =>
+  MGridBoardReader n n' RealWorld tl mrk a -> MGridGame n n' tl mrk a
+withMGridBoardReader g = do
+  env <- ask
+  liftIO
+    . join
+    . STM.atomically
+    . fmap (\e -> stToIO
+             $ (runReaderT . unMGridBoardReader) g e)
+    . STM.readTVar
+    $ _gameState env
+
+
 
 
 promptSeed :: IO StdGen

@@ -11,7 +11,6 @@ ScopedTypeVariables
 , FunctionalDependencies
 , DuplicateRecordFields
 , TypeFamilies
-, AllowAmbiguousTypes
 #-}
 
 {-# OPTIONS_GHC -fplugin GHC.TypeLits.KnownNat.Solver #-}

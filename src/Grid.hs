@@ -6,7 +6,6 @@ ScopedTypeVariables
 , DataKinds
 , TypeOperators
 , KindSignatures
-, AllowAmbiguousTypes
 , TypeFamilies
 #-}
 
@@ -18,6 +17,7 @@ module Grid (
 , GridCoord(..)
 , GridIndex(..)
 , MGridBoardState(..)
+, MGridBoardReader(..)
 , gridIndexCoord
 , gridCoordIndex
 , squareAdjacentCoords
@@ -43,11 +43,12 @@ import Data.Functor.RepB as FRB
 import Data.Distributive as FD
 
 import Control.Monad (replicateM, forM_)
+import Control.Monad.Base (MonadBase(..), liftBase)
 import Control.Monad.ST (ST(..), runST)
 import Control.Monad.State.Strict (State(..), get, state, evalState)
 import Control.Monad.Reader (MonadReader(..), ReaderT(..), lift, runReaderT)
 import Control.Monad.Random (MonadInterleave, interleave)
-import Control.Monad.Primitive (PrimMonad, PrimState)
+import Control.Monad.Primitive (PrimMonad(..), PrimState)
 import Control.Arrow ((&&&))
 
 import Data.Hashable (Hashable(..))
@@ -86,7 +87,7 @@ newtype Grid (n :: Nat) (n' :: Nat) a =
   deriving (Functor, Applicative, Monad, Foldable)
 
 newtype MGrid (n :: Nat) (n' :: Nat) s a =
-  MGrid { getMVecotr :: VMS.MVector (n * n') s a }
+  MGrid { getMVector :: VMS.MVector (n * n') s a }
 
 --TODO use deriving via to get other gridcoords possibly
 newtype GridCoord (n :: Nat) (n' :: Nat) = GridCoord { unCoord :: (Finite n, Finite n')}
@@ -98,6 +99,14 @@ data MGridBoardState (n :: Nat) (n' :: Nat) s tl mrk = MGridBoardState
   { _boardTileGrid :: !(MGrid n n' s (TileState tl mrk))
   , _boardSum :: !(MutVar s (BoardSum mrk))
   }
+
+newtype MGridBoardReader (n :: Nat) (n' :: Nat) s tl mrk a =
+  MGridBoardReader { unMGridBoardReader :: ReaderT (MGridBoardState n n' s tl mrk) (ST s) a }
+  deriving (Functor
+           , Applicative
+           , Monad
+           , MonadReader (MGridBoardState n n' s tl mrk)
+           , MonadBase (ST s))
 
 gridIndexCoord :: forall n n'. (KnownNat n, KnownNat n') =>
   LI.Iso' (GridIndex n n') (GridCoord n n')
@@ -165,6 +174,28 @@ instance (KnownNat n, KnownNat n') => FRB.BoardFunctor (Grid n n') where
 instance (KnownNat n
          , KnownNat n'
          , HasTile tl
+         , HasMark mrk) =>
+  MonadBoardState (MGridBoardReader n n' s tl mrk) where
+  type BSKey (MGridBoardReader n n' s tl mrk) = (GridCoord n n')
+  type BSTile (MGridBoardReader n n' s tl mrk) = tl
+  type BSMark (MGridBoardReader n n' s tl mrk) = mrk
+  getTile k = do
+    (MGrid v) <- _boardTileGrid <$> ask
+    liftBase $ VMS.read v $ k L.^. gridCoordIndex
+  putTile k tls = do
+    (MGrid v) <- _boardTileGrid <$> ask
+    liftBase $ VMS.write v (k L.^. gridCoordIndex) tls
+  modifyAllBoardTiles f = do
+    (MGrid v) <- _boardTileGrid <$> ask
+    liftBase $ forM_ [minBound..maxBound]
+      (\k -> VMS.modify v (\tls -> f (k, tls)) (k L.^. gridCoordIndex))
+  getBoardSum = ask >>= (liftBase . readMutVar . _boardSum)
+  modifyBoardSum f = ask >>= (liftBase . flip modifyMutVar' f . _boardSum)
+
+{-
+instance (KnownNat n
+         , KnownNat n'
+         , HasTile tl
          , HasMark mrk
          , PrimMonad m
          , PrimState m ~ s) =>
@@ -184,7 +215,7 @@ instance (KnownNat n
       (\k -> VMS.modify v (\tls -> f (k, tls)) (k L.^. gridCoordIndex))
   getBoardSum = ask >>= (lift . readMutVar . _boardSum)
   modifyBoardSum f = ask >>= (lift . flip modifyMutVar' f . _boardSum)
-
+-}
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   GridCoord n n' -> [GridCoord n n']

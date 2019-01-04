@@ -28,6 +28,7 @@ dependencies:
 - vector
 - ansi-wl-pprint
 - mtl
+- transformers-base
 - stm
 - monad-loops
 - exceptions

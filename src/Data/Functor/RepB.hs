@@ -24,7 +24,10 @@ import Numeric.Natural
 --import qualified Data.Vector as V
 class (Eq k, Hashable k, Bounded k, Enum k) => BoardKey k where
   domainSize :: Proxy k -> Natural
-  domainSize _ = fromIntegral $ length [(minBound :: k)..]
+  domainSize _ = fromIntegral
+                 $ (fromEnum (maxBound :: k))
+                 - (fromEnum (minBound :: k))
+                 + 1
 
 class (Representable f, BoardKey (Rep f)) => BoardFunctor f where
   update :: f a -> [(Rep f, a)] -> f a
