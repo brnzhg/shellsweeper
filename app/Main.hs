@@ -34,7 +34,7 @@ import Control.Monad.Base (MonadBase(..), liftBase)
 import Control.Monad.Loops (untilJust)
 import Control.Monad.ST (ST, runST, stToIO)
 --import Control.Monad.Cont (ContT(..))
-import Control.Monad.State.Lazy (StateT(..), get, put, lift, evalStateT)
+import Control.Monad.Trans (lift)
 import Control.Monad.IO.Class
 import Control.Monad.Primitive (PrimMonad, PrimState, primToST, RealWorld)
 import Control.Monad.Reader (ask, runReader, runReaderT, Reader, ReaderT, MonadReader)
@@ -59,12 +59,16 @@ import qualified Data.Vector.Generic.Sized as VGS
 --import Data.Hashable (Hashable(..))
 
 import qualified System.Random as SR
-import Control.Monad.Random (MonadSplit
+import qualified Control.Monad.Random as MRND
+import qualified Control.Monad.Trans.Random.Strict as MTRNDS
+{-
+(MonadSplit
                             , MonadRandom
                             , RandomGen
                             , evalRandT
                             , evalRand
                             , getSplit)
+-}
 
 import GHC.TypeLits
 
@@ -99,10 +103,11 @@ import Grid (MGrid(..)
             , gridToListOfList)
 import ChooseFinite (indexSwapPairsChooseK)
 
---TODO game env with ranodm seed
-data GameEnv be gs = GameEnv { _startGameSeed :: !StdGen
+--TODO split gamestate so it has the TVar, and other stuff in it
+data GameEnv be gs = GameEnv { _startSeed :: !StdGen
+                             , _currentSeed :: !StdGen
                              , _boardEnv :: !be
-                             , _gameState :: !(STM.TVar gs)
+                             , _gameState :: !gs
                              }
 
 data GridBoardEnv (n :: Nat) (n' :: Nat) = GridBoardEnv {
@@ -116,8 +121,13 @@ data SomeGridBoardEnv :: * where
                      -> GridBoardEnv n n'
                      -> SomeGridBoardEnv
 
+data MGridGameState n n' s tl mrk = MGridGameState {
+  _boardState :: !(STM.TVar (MGridBoardState n n' s tl mrk))
+  }
+
 type MGridGameEnv (n :: Nat) (n' :: Nat) s tl mrk =
-  GameEnv (GridBoardEnv n n') (MGridBoardState n n' s tl mrk)
+  GameEnv (GridBoardEnv n n') (MGridGameState n n' s tl mrk)
+
 
 newtype MGridGame (n :: Nat) (n' :: Nat) tl mrk a =
   MGridGame { unMGridGame :: ReaderT (MGridGameEnv n n' RealWorld tl mrk) IO a }
@@ -132,6 +142,10 @@ instance (KnownNat n, KnownNat n') =>
   HasBoardNumMines (GridBoardEnv n n') where
   boardNumMines = _boardNumMines
 
+--TODO why do i need this? because of the constraints?
+instance (KnownNat n, KnownNat n') =>
+  HasBoardEnv (GridCoord n n') (GridBoardEnv n n')
+
 
 --TODO make better with lenses
 withMGridBoardReader :: (KnownNat n, KnownNat n', HasTile tl, HasMark mrk) =>
@@ -144,9 +158,23 @@ withMGridBoardReader g = do
     . fmap (\e -> stToIO
              $ (runReaderT . unMGridBoardReader) g e)
     . STM.readTVar
+    . _boardState
     $ _gameState env
 
-
+--TODO this shit can def be generalized, dont need all these concrete types
+randomSingleMineMGridGameEnv :: (KnownNat n, KnownNat n', HasMark mrk) =>
+  StdGen
+  -> GridBoardEnv n n'
+  -> MTRNDS.RandT StdGen IO (MGridGameEnv n n' RealWorld SingleMineTile mrk)
+randomSingleMineMGridGameEnv strtSeed be = do
+  currSeed <- MTRNDS.liftRandT (\g -> return (g, g))
+  bsStart <- flip runReaderT be randomSingleMineMGridBoardState
+  bs <- lift $ STM.newTVarIO bsStart
+  return $ GameEnv { _startSeed = strtSeed
+                   , _currentSeed = currSeed
+                   , _boardEnv = be
+                   , _gameState = MGridGameState { _boardState = bs }
+                   }
 
 
 promptSeed :: IO StdGen

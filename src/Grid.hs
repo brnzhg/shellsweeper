@@ -192,30 +192,6 @@ instance (KnownNat n
   getBoardSum = ask >>= (liftBase . readMutVar . _boardSum)
   modifyBoardSum f = ask >>= (liftBase . flip modifyMutVar' f . _boardSum)
 
-{-
-instance (KnownNat n
-         , KnownNat n'
-         , HasTile tl
-         , HasMark mrk
-         , PrimMonad m
-         , PrimState m ~ s) =>
-  MonadBoardState (ReaderT (MGridBoardState n n' s tl mrk) m) where
-  type BSKey (ReaderT (MGridBoardState n n' s tl mrk) m) = (GridCoord n n')
-  type BSTile (ReaderT (MGridBoardState n n' s tl mrk) m) = tl
-  type BSMark (ReaderT (MGridBoardState n n' s tl mrk) m) = mrk
-  getTile k = do
-    (MGrid v) <- _boardTileGrid <$> ask
-    lift $ VMS.read v $ k L.^. gridCoordIndex
-  putTile k tls = do
-    (MGrid v) <- _boardTileGrid <$> ask
-    lift $ VMS.write v (k L.^. gridCoordIndex) tls
-  modifyAllBoardTiles f = do
-    (MGrid v) <- _boardTileGrid <$> ask
-    lift $ forM_ [minBound..maxBound]
-      (\k -> VMS.modify v (\tls -> f (k, tls)) (k L.^. gridCoordIndex))
-  getBoardSum = ask >>= (lift . readMutVar . _boardSum)
-  modifyBoardSum f = ask >>= (lift . flip modifyMutVar' f . _boardSum)
--}
 
 squareAdjacentCoords :: forall n n'. (KnownNat n, KnownNat n') =>
   GridCoord n n' -> [GridCoord n n']
@@ -242,6 +218,7 @@ singleMineMGridFromSwapPairs mines indexSwapPairs = do
   return mg
 -- . L.over (L.mapped . L.both) (L.view gridCoordIndex)
 
+{-
 randomSingleMineMGrid :: (KnownNat n
                          , KnownNat n'
                          , HasBoardNumMines e
@@ -256,6 +233,21 @@ randomSingleMineMGrid = do
               $ boardNumMines env
   indexSwapPairs <- indexSwapPairsChooseK mines
   return $ singleMineMGridFromSwapPairs mines indexSwapPairs
+-}
+randomSingleMineMGrid :: (KnownNat n
+                         , KnownNat n'
+                         , HasBoardNumMines e
+                         , MonadReader e m
+                         , MonadInterleave m
+                         , PrimMonad m) =>
+  m (MGrid n n' (PrimState m) Bool)
+randomSingleMineMGrid = do
+  env <- ask
+  let mines = packFiniteDefault maxBound
+              $ fromIntegral
+              $ boardNumMines env
+  indexSwapPairs <- indexSwapPairsChooseK mines
+  singleMineMGridFromSwapPairs mines indexSwapPairs
 
 
 singleMineTileGridFromMines ::
@@ -285,6 +277,7 @@ singleMineMGridBoardStateFromTiles tlGrid = do
                          , _boardSum = emptyBoardSum
                          }
 
+{-
 randomSingleMineMGridBoardState :: forall n n' e m mrk m'.
   (KnownNat n
   , KnownNat n'
@@ -303,7 +296,21 @@ randomSingleMineMGridBoardState = do
   return $ fzMnGrid
     >>= flip runReaderT env . singleMineTileGridFromMines
     >>= singleMineMGridBoardStateFromTiles
-
+-}
+randomSingleMineMGridBoardState :: forall n n' e m mrk.
+  (KnownNat n
+  , KnownNat n'
+  , HasBoardEnv (GridCoord n n') e
+  , MonadReader e m
+  , MonadInterleave m
+  , HasMark mrk
+  , PrimMonad m) =>
+  m (MGridBoardState n n' (PrimState m) SingleMineTile mrk)
+randomSingleMineMGridBoardState = do
+  (mnGrid :: MGrid n n' (PrimState m) Bool) <- randomSingleMineMGrid
+  fzMnGrid <- freezeGrid mnGrid
+  fzTlGrid <- singleMineTileGridFromMines fzMnGrid
+  singleMineMGridBoardStateFromTiles fzTlGrid
 
 gridToVecOfVec :: forall n n' a. (KnownNat n, KnownNat n') =>
   Grid n n' a -> VS.Vector n (VS.Vector n' a)
